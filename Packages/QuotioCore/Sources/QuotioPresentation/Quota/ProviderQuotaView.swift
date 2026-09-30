@@ -213,10 +213,6 @@ private struct AccountQuotaCardV2: View {
         return !data.models.isEmpty
     }
 
-    private var displayEmail: String {
-        account.email.masked(if: settings.hideSensitiveInfo)
-    }
-
     private var isWarmupEnabled: Bool {
         warmup.isEnabled(for: provider, accountKey: account.key)
     }
@@ -264,7 +260,7 @@ private struct AccountQuotaCardV2: View {
                         PlanBadgeV2Compact(planName: planName)
                     }
 
-                    Text(displayEmail)
+                    SensitiveAccountText(value: account.email, isSensitive: settings.hideSensitiveInfo)
                         .font(.headline)
                         .fontWeight(.semibold)
                         .lineLimit(1)
@@ -881,7 +877,7 @@ private struct AntigravityModelsDetailSheet: View {
                 VStack(alignment: .leading, spacing: 2) {
                     Text("quota.allModels".localized())
                         .font(.headline)
-                    Text(email.masked(if: settings.hideSensitiveInfo))
+                    SensitiveAccountText(value: email, isSensitive: settings.hideSensitiveInfo)
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 }

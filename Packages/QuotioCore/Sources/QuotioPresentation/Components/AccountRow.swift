@@ -202,10 +202,6 @@ struct AccountRow: View {
         settings.isSelected(account.menuBarItem)
     }
     
-    private var maskedDisplayName: String {
-        account.displayName.masked(if: settings.hideSensitiveInfo)
-    }
-    
     private var statusColor: Color {
         switch account.status {
         case "ready": return account.isDisabled ? .gray : .green
@@ -222,7 +218,7 @@ struct AccountRow: View {
             
             // Account info
             VStack(alignment: .leading, spacing: 2) {
-                Text(maskedDisplayName)
+                SensitiveAccountText(value: account.displayName, isSensitive: settings.hideSensitiveInfo)
                     .fontWeight(.medium)
                     .lineLimit(1)
                 

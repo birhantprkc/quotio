@@ -1297,6 +1297,7 @@
         }
       }
     },
+    "action.hideAccountName" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Hide account name"}}, "vi": {"stringUnit": {"state": "translated", "value": "Ẩn tên tài khoản"}}, "fr": {"stringUnit": {"state": "translated", "value": "Masquer le nom du compte"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "隐藏账户名称"}}}},
     "action.ok" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -1529,6 +1530,7 @@
         }
       }
     },
+    "action.showAccountName" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Show account name"}}, "vi": {"stringUnit": {"state": "translated", "value": "Hiện tên tài khoản"}}, "fr": {"stringUnit": {"state": "translated", "value": "Afficher le nom du compte"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "显示账户名称"}}}},
     "action.startProxy" : {
       "extractionState" : "stale",
       "localizations" : {
@@ -15082,29 +15084,30 @@
         "en" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Masks sensitive account information."
+            "value" : "Blurs account names. Click a name to reveal it temporarily."
           }
         },
         "fr" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Masque les informations sensibles du compte."
+            "value" : "Floute les noms de compte. Cliquez sur un nom pour l’afficher temporairement."
           }
         },
         "vi" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "Che thông tin tài khoản nhạy cảm."
+            "value" : "Làm mờ tên tài khoản. Bấm vào tên để tạm thời hiển thị."
           }
         },
         "zh-Hans" : {
           "stringUnit" : {
             "state" : "translated",
-            "value" : "隐藏敏感的账户信息。"
+            "value" : "模糊账户名称。点按名称可暂时显示。"
           }
         }
       }
     },
+    "privacy.accountHidden" : {"localizations": {"en": {"stringUnit": {"state": "translated", "value": "Account hidden"}}, "vi": {"stringUnit": {"state": "translated", "value": "Tài khoản đã ẩn"}}, "fr": {"stringUnit": {"state": "translated", "value": "Compte masqué"}}, "zh-Hans": {"stringUnit": {"state": "translated", "value": "账户已隐藏"}}}},
     "settings.proxy.error.invalidPort" : {
       "extractionState" : "stale",
       "localizations" : {

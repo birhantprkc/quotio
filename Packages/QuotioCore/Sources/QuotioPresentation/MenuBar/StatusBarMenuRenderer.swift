@@ -490,10 +490,6 @@ private struct MenuAccountCardView: View {
 
     @State private var isHovered = false
     
-    private var displayEmail: String {
-        email.masked(if: settings.hideSensitiveInfo)
-    }
-    
     private var tierConfig: (name: String, bgColor: Color, textColor: Color)? {
         guard let name = data.planType ?? subscriptionInfo?.tierDisplayName else { return nil }
         return planConfig(for: name)
@@ -555,7 +551,7 @@ private struct MenuAccountCardView: View {
                 .opacity(0.8)
             
             // Email
-            Text(displayEmail)
+            SensitiveAccountText(value: email, isSensitive: settings.hideSensitiveInfo)
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundStyle(.primary)
                 .lineLimit(1)

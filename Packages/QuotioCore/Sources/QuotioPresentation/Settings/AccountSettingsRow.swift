@@ -37,10 +37,9 @@ struct AccountSettingsRow: View {
             HStack(spacing: 8) {
                 AccountStatusDot(tone: row.tone, title: statusTitle)
                 VStack(alignment: .leading, spacing: 2) {
-                    Text(displayName)
+                    SensitiveAccountText(value: account.displayName, isSensitive: menuBar.hideSensitiveInfo)
                         .lineLimit(1)
                         .truncationMode(.middle)
-                        .help(displayName)
                     if row.needsAttention {
                         attentionDetail
                     } else {

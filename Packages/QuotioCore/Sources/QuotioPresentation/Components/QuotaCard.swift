@@ -292,11 +292,6 @@ private struct QuotaAccountRow: View {
     var quotaData: ProviderQuota?
     @Environment(MenuBarSettingsManager.self) private var settings
 
-    private var displayName: String {
-        let name = account.email ?? account.name
-        return name.masked(if: settings.hideSensitiveInfo)
-    }
-
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
             HStack(spacing: 8) {
@@ -304,7 +299,7 @@ private struct QuotaAccountRow: View {
                     .fill(account.statusColor)
                     .frame(width: 8, height: 8)
 
-                Text(displayName)
+                SensitiveAccountText(value: account.email ?? account.name, isSensitive: settings.hideSensitiveInfo)
                     .font(.caption)
                     .lineLimit(1)
 

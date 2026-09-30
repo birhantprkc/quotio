@@ -32,10 +32,6 @@ struct WarmupSheet: View {
         viewModel.isEnabled(for: provider, accountKey: accountKey)
     }
     
-    private var displayEmail: String {
-        accountEmail.masked(if: settings.hideSensitiveInfo)
-    }
-
     private var warmupIsRunning: Bool {
         viewModel.status(provider: provider, accountKey: accountKey).isRunning
     }
@@ -148,7 +144,7 @@ struct WarmupSheet: View {
                 Text("warmup.title".localized())
                     .font(.headline)
                 
-                Text(displayEmail)
+                SensitiveAccountText(value: accountEmail, isSensitive: settings.hideSensitiveInfo)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

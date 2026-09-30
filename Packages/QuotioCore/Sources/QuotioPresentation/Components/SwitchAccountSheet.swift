@@ -56,7 +56,7 @@ struct SwitchAccountSheet: View {
                 Text("antigravity.switch.title".localized())
                     .font(.headline)
                 
-                Text(accountEmail.masked(if: settings.hideSensitiveInfo))
+                SensitiveAccountText(value: accountEmail, isSensitive: settings.hideSensitiveInfo)
                     .font(.subheadline)
                     .foregroundStyle(.secondary)
                     .lineLimit(1)

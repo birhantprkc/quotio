@@ -194,7 +194,17 @@ struct IDEScanSheet: View {
             if let result = ideScanSettings.lastScanResult {
                 VStack(alignment: .leading, spacing: 8) {
                     if result.cursorFound {
-                        resultRow(icon: "checkmark.circle.fill", color: .green, text: "Cursor: \((result.cursorEmail ?? "Found").masked(if: settings.hideSensitiveInfo))")
+                        HStack(spacing: 8) {
+                            Image(systemName: "checkmark.circle.fill")
+                                .foregroundStyle(.green)
+                                .font(.caption)
+                            Text("Cursor:")
+                            SensitiveAccountText(
+                                value: result.cursorEmail ?? "Found",
+                                isSensitive: settings.hideSensitiveInfo
+                            )
+                        }
+                        .font(.callout)
                     } else if scanOptions.scanCursor {
                         resultRow(icon: "xmark.circle.fill", color: .secondary, text: "Cursor: " + "ideScan.notFound".localized())
                     }
