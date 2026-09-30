@@ -25,7 +25,7 @@ struct QuotaQuery: EntityQuery {
             (host.snapshot?.accounts ?? []).flatMap { account in
                 account.metrics.map { metric in
                     QuotaChoice(id: QuotaChoice.identifier(host: host.id, account: account.id, metric: metric.id),
-                                title: "\(host.name) · \(account.providerName) · \(state.hideValues ? String(localized: "Account hidden") : account.name) · \(metric.label)")
+                                title: "\(host.name) · \(account.providerName) · \(state.blurAccountNames ? String(localized: "Account hidden") : account.name) · \(metric.label)")
                 }
             }
         }
@@ -41,7 +41,6 @@ struct QuotaEntry: TimelineEntry {
     let date: Date
     var account: MobileSnapshot.Account?
     var metric: MobileSnapshot.Metric?
-    var hidden = false
     var showUsed = false
     var stale = true
     var message: String?
@@ -56,7 +55,7 @@ struct QuotaProvider: AppIntentTimelineProvider {
         let entry = await entry(configuration, fetch: true)
         var entries = [entry]
         let dates = [entry.account?.expiresAt, entry.metric?.resetsAt].compactMap { $0 }.filter { $0 > entry.date }.sorted()
-        for date in Set(dates).sorted() { var stale = entry; stale = QuotaEntry(date: date, account: stale.account, metric: stale.metric, hidden: stale.hidden, showUsed: stale.showUsed, stale: true, message: stale.message, url: stale.url); entries.append(stale) }
+        for date in Set(dates).sorted() { var stale = entry; stale = QuotaEntry(date: date, account: stale.account, metric: stale.metric, showUsed: stale.showUsed, stale: true, message: stale.message, url: stale.url); entries.append(stale) }
         return Timeline(entries: entries, policy: .after(.now.addingTimeInterval(1800)))
     }
     private func entry(_ configuration: QuotaIntent, fetch: Bool) async -> QuotaEntry {
@@ -64,7 +63,6 @@ struct QuotaProvider: AppIntentTimelineProvider {
         do {
             guard let storage = SharedContainer.storage else { throw MobileError.invalidCache }
             let state = try storage.load()
-            result.hidden = state.hideValues
             guard let choice = configuration.quota, choice.components.count == 3,
                   let host = state.hosts.first(where: { $0.id == choice.components[0] }) else {
                 result.message = String(localized: "Edit widget to choose quota"); return result
@@ -91,12 +89,11 @@ struct QuotaProvider: AppIntentTimelineProvider {
                     result.message = String(localized: "Host identity changed"); return result
                 } catch { offline = true }
             }
-            // Re-read deletion/privacy changes after the network suspension.
+            // Re-read deletion changes after the network suspension.
             let latest = try storage.load()
             guard latest.hosts.contains(where: { $0.id == host.id && $0.clientID == host.clientID && $0.origin == host.origin && $0.certificate == host.certificate && !$0.needsPairing }) else {
                 result.message = String(localized: "Host removed"); return result
             }
-            result.hidden = latest.hideValues
             guard let account = snapshot?.account(choice.components[1]),
                   let metric = account.metrics.first(where: { $0.id == choice.components[2] }) else {
                 result.message = String(localized: "Quota unavailable"); return result
@@ -116,7 +113,6 @@ struct QuotaWidgetView: View {
     @Environment(\.widgetFamily) private var family
     private var value: Double? { entry.metric?.remainingPercent.map { Double(QuotaFormat.displayPercent(remaining: $0, showUsed: entry.showUsed)) } }
     private var label: String {
-        if entry.hidden { return "••••" }
         if let remaining = entry.metric?.remainingPercent { return QuotaFormat.percentText(remaining: remaining, showUsed: entry.showUsed) }
         return entry.metric?.state == "unlimited" ? String(localized: "Unlimited") : "—"
     }
@@ -128,9 +124,7 @@ struct QuotaWidgetView: View {
                 case .accessoryInline:
                     Text("\(entry.account?.providerName ?? "Quotio") · \(label) \(entry.stale ? "◷" : "")")
                 case .accessoryCircular:
-                    if entry.hidden {
-                        Image(systemName: "eye.slash").accessibilityLabel("Values hidden")
-                    } else if let value {
+                    if let value {
                         Gauge(value: value, in: 0...100) {
                             Image(systemName: entry.stale ? "clock" : "chart.pie")
                         } currentValueLabel: { Text(label).font(.caption) }
@@ -146,21 +140,21 @@ struct QuotaWidgetView: View {
                         Text(entry.metric?.label ?? "").font(.caption).foregroundStyle(.secondary)
                         HStack(alignment: .firstTextBaseline) {
                             Text(label).font(family == .accessoryRectangular ? .title2 : .largeTitle).monospacedDigit()
-                            if !entry.hidden { Text(entry.showUsed ? "used" : "left").font(.caption) }
+                            Text(entry.showUsed ? "used" : "left").font(.caption)
                         }
-                        if family != .accessoryRectangular, !entry.hidden, let value { ProgressView(value: value, total: 100).tint(.green) }
+                        if family != .accessoryRectangular, let value { ProgressView(value: value, total: 100).tint(.green) }
                         if entry.stale { Label("Older data", systemImage: "clock").font(.caption2) }
                         else if let reset = entry.metric?.resetsAt { Text(reset, format: .dateTime.month(.abbreviated).day().hour().minute()).font(.caption2).foregroundStyle(.secondary) }
                         if family == .systemLarge, let account = entry.account {
                             Divider()
-                            if let analytics = account.analytics, !entry.hidden {
+                            if let analytics = account.analytics {
                                 Chart(Array(analytics.days.suffix(30))) { day in
                                     BarMark(x: .value("Reported day", day.date), y: .value("Tokens", day.tokens)).foregroundStyle(.green)
                                 }.chartXAxis(.hidden).chartYAxis(.hidden).frame(height: 80)
                                 Text("30 reported days").font(.caption2).foregroundStyle(.secondary)
                             }
                             ForEach(account.metrics.filter { $0.id != entry.metric?.id }.prefix(2)) { metric in
-                                HStack { Text(metric.label); Spacer(); Text(entry.hidden ? "••••" : metric.remainingPercent.map { QuotaFormat.percentText(remaining: $0, showUsed: entry.showUsed) } ?? "—") }.font(.caption)
+                                HStack { Text(metric.label); Spacer(); Text(metric.remainingPercent.map { QuotaFormat.percentText(remaining: $0, showUsed: entry.showUsed) } ?? "—") }.font(.caption)
                             }
                             Spacer(minLength: 0)
                             if let date = account.fetchedAt { Text("Observed \(date.formatted(date: .abbreviated, time: .shortened))").font(.caption2) }

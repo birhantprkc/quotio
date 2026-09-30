@@ -4,7 +4,6 @@ import SwiftUI
 struct ValueRow: View {
     let label: String
     let value: String
-    var hidden = false
     @Environment(\.dynamicTypeSize) private var dynamicTypeSize
 
     var body: some View {
@@ -14,7 +13,7 @@ struct ValueRow: View {
         layout {
             Text(label).font(DS.Typography.valueLabel).foregroundStyle(.secondary)
             if !dynamicTypeSize.isAccessibilitySize { Spacer(minLength: DS.Space.s) }
-            Text(hidden ? "••••" : value)
+            Text(value)
                 .font(DS.Typography.value)
                 .foregroundStyle(.primary)
                 .privacySensitive()
@@ -22,7 +21,7 @@ struct ValueRow: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         // One label (not label + value) so the text survives when a parent button merges children.
         .accessibilityElement(children: .ignore)
-        .accessibilityLabel(Text(verbatim: "\(label), \(hidden ? String(localized: "Values hidden") : value)"))
+        .accessibilityLabel(Text(verbatim: "\(label), \(value)"))
     }
 }
 
@@ -33,7 +32,6 @@ struct ValueRow: View {
         ValueRow(label: "Workspace bytrong credits", value: "$0")
         ValueRow(label: "Extra usage", value: "62,500 credits")
         ValueRow(label: "A very long provider value label that should wrap gracefully", value: "Unlimited")
-        ValueRow(label: "Hidden", value: "$1", hidden: true)
     }
     .padding()
 }

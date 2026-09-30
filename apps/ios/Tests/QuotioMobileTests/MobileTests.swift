@@ -36,10 +36,10 @@ private func fixture() throws -> QuotioHostSnapshot {
     var state = MobileState()
     let snapshot = MobileSnapshot(try fixture())
     state.hosts = [HostProfile(id: snapshot.hostID, name: "Host", origin: URL(string: "https://host.test")!, clientID: "read", expiresAt: nil, snapshot: snapshot)]
-    state.hideValues = true
+    state.blurAccountNames = true
     try storage.save(state)
     #expect(try storage.load().hosts.first?.snapshot?.accounts.count == snapshot.accounts.count)
-    #expect(try storage.load().hideValues)
+    #expect(try storage.load().blurAccountNames)
     try Data("invalid".utf8).write(to: directory.appendingPathComponent("state.json"))
     #expect(throws: (any Error).self) { try storage.load() }
 }

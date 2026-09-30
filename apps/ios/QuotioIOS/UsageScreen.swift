@@ -10,6 +10,7 @@ struct UsageScreen: View {
     @State private var filter: String?
     @State private var scrollPosition = ScrollPosition(edge: .top)
     @State private var showIssue = false
+    @State private var revealedAccountIDs: Set<String> = []
 
     var body: some View {
         Group {
@@ -22,6 +23,7 @@ struct UsageScreen: View {
         .navigationTitle("Quotio")
         .navigationBarTitleDisplayMode(.inline)
         .toolbar { toolbar }
+        .onDisappear { revealedAccountIDs.removeAll() }
         .sheet(isPresented: $showIssue) {
             if let issue = store.currentIssue {
                 ConnectionIssueSheet(issue: issue, lastSync: store.selected?.snapshot?.receivedAt,
@@ -42,11 +44,6 @@ struct UsageScreen: View {
                 } label: {
                     ConnectionChip(name: host.name, state: chipState(host))
                 }
-            }
-        }
-        ToolbarItem(placement: .topBarTrailing) {
-            Button(store.state.hideValues ? "Show values" : "Hide values", systemImage: store.state.hideValues ? "eye.slash" : "eye") {
-                store.state.hideValues.toggle(); store.persist()
             }
         }
         if store.selected == nil {
@@ -125,12 +122,16 @@ struct UsageScreen: View {
             ProviderSectionHeader(providerID: section.providerID, name: section.providerName)
             ForEach(section.accounts) { account in
                 let title = account.identity != nil || section.accounts.count > 1 ? account.name : nil
+                let blurAccountName = store.state.blurAccountNames && !revealedAccountIDs.contains(account.id)
                 Button { accountID = account.id } label: {
                     if account.hasData {
-                        AccountCard(account: account, title: title, hidden: store.state.hideValues, showUsed: store.state.showUsed)
+                        AccountCard(account: account, title: title, blurAccountName: blurAccountName,
+                                    showUsed: store.state.showUsed, accountNameToggleEnabled: store.state.blurAccountNames,
+                                    toggleAccountName: { toggleAccountName(account.id) })
                     } else {
-                        EmptyAccountRow(title: title.map { store.state.hideValues ? String(localized: "Account hidden") : $0 },
-                                        reason: account.emptyReason)
+                        EmptyAccountRow(title: title, reason: account.emptyReason,
+                                        blurAccountName: blurAccountName, accountNameToggleEnabled: store.state.blurAccountNames,
+                                        toggleAccountName: { toggleAccountName(account.id) })
                     }
                 }
                 .buttonStyle(.plain)
@@ -143,6 +144,11 @@ struct UsageScreen: View {
                 }
             }
         }
+    }
+
+    private func toggleAccountName(_ id: String) {
+        guard store.state.blurAccountNames else { return }
+        if revealedAccountIDs.remove(id) == nil { revealedAccountIDs.insert(id) }
     }
 
     private var onboarding: some View {

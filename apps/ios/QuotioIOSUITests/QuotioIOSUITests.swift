@@ -1,6 +1,7 @@
 import XCTest
 
 final class QuotioIOSUITests: XCTestCase {
+    @MainActor
     private func card(_ app: XCUIApplication, containing text: String) -> XCUIElement {
         app.buttons.containing(NSPredicate(format: "label CONTAINS %@", text)).firstMatch
     }
@@ -15,15 +16,37 @@ final class QuotioIOSUITests: XCTestCase {
 
     @MainActor func testDemoNavigationPrivacyAndConnectionForm() {
         let app = XCUIApplication()
-        app.launchArguments = ["--demo", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
+        app.launchArguments = ["--demo", "--blur-account-names", "-AppleLanguages", "(en)", "-AppleLocale", "en_US"]
         app.launch()
         XCTAssertTrue(app.buttons["Demo Mac"].waitForExistence(timeout: 10))
         XCTAssertTrue(card(app, containing: "39 percent remaining").exists)
         // Healthy state shows no connection banner.
         XCTAssertFalse(app.buttons["Retry"].exists)
-        app.buttons["Hide values"].tap()
-        XCTAssertFalse(card(app, containing: "39 percent remaining").exists)
-        XCTAssertTrue(card(app, containing: "Values hidden").exists)
+        app.tabBars.buttons["Settings"].tap()
+        let blurAccountNames = app.switches["Blur account names"]
+        XCTAssertEqual(blurAccountNames.value as? String, "1")
+        app.tabBars.buttons["Usage"].tap()
+        let firstCard = card(app, containing: "39 percent remaining")
+        XCTAssertTrue(firstCard.exists)
+        let accountName = firstCard.coordinate(withNormalizedOffset: CGVector(dx: 0.25, dy: 0.2))
+        accountName.tap()
+        XCTAssertTrue(app.buttons["Demo Mac"].exists)
+        let revealedAttachment = XCTAttachment(screenshot: app.screenshot())
+        revealedAttachment.name = "One account name revealed"
+        revealedAttachment.lifetime = .keepAlways
+        add(revealedAttachment)
+        accountName.tap()
+        let toggledBackAttachment = XCTAttachment(screenshot: app.screenshot())
+        toggledBackAttachment.name = "Account name blurred by second tap"
+        toggledBackAttachment.lifetime = .keepAlways
+        add(toggledBackAttachment)
+        accountName.tap()
+        app.tabBars.buttons["Settings"].tap()
+        app.tabBars.buttons["Usage"].tap()
+        let privacyAttachment = XCTAttachment(screenshot: app.screenshot())
+        privacyAttachment.name = "Account name blurred again after leaving Usage"
+        privacyAttachment.lifetime = .keepAlways
+        add(privacyAttachment)
         app.tabBars.buttons["Settings"].tap()
         app.buttons["Add computer"].tap()
         XCTAssertTrue(app.buttons["Scan pairing code"].waitForExistence(timeout: 3))

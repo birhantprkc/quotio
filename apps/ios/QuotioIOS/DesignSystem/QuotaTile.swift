@@ -11,7 +11,6 @@ struct QuotaTile: View {
     var now = Date()
     var showUsed = false
     var stale = false
-    var hidden = false
 
     @Environment(\.density) private var density
     @Environment(\.locale) private var locale
@@ -21,7 +20,6 @@ struct QuotaTile: View {
     private var color: Color { stale ? DS.Palette.muted : DS.Palette.level(QuotaFormat.level(remaining: remaining)) }
 
     private var percentText: String {
-        if hidden { return "••••" }
         guard let remaining else { return "—" }
         return QuotaFormat.percentText(remaining: remaining, showUsed: showUsed, locale: locale)
     }
@@ -53,29 +51,25 @@ struct QuotaTile: View {
             HStack(spacing: DS.Space.s) {
                 Text(percentText)
                     .font(DS.Typography.percent)
-                    .foregroundStyle(hidden ? .primary : color)
+                    .foregroundStyle(color)
                     .contentTransition(.numericText())
                     .lineLimit(1)
                     .fixedSize()
                     .privacySensitive()
-                if !hidden {
-                    QuotaBar(fraction: remaining.map { Double(QuotaFormat.displayPercent(remaining: $0, showUsed: showUsed)) / 100 }, color: color)
-                }
+                QuotaBar(fraction: remaining.map { Double(QuotaFormat.displayPercent(remaining: $0, showUsed: showUsed)) / 100 }, color: color)
             }
         }
         .padding(DS.Layout.of(density).tilePadding)
         .frame(maxWidth: .infinity, alignment: .leading)
         .tileSurface()
-        .animation(hidden ? nil : DS.Motion.standard(reduceMotion: reduceMotion), value: remaining)
+        .animation(DS.Motion.standard(reduceMotion: reduceMotion), value: remaining)
         .accessibilityElement(children: .ignore)
         .accessibilityLabel(Text(spokenLabel))
     }
 
     private var spokenLabel: String {
         var parts = [label]
-        if hidden {
-            parts.append(String(localized: "Values hidden"))
-        } else if let remaining {
+        if let remaining {
             let value = QuotaFormat.displayPercent(remaining: remaining, showUsed: showUsed)
             parts.append(showUsed ? String(localized: "\(value) percent used") : String(localized: "\(value) percent remaining"))
         } else {
@@ -92,10 +86,10 @@ struct QuotaTile: View {
 }
 
 extension QuotaTile {
-    init(metric: MobileSnapshot.Metric, now: Date, showUsed: Bool, stale: Bool, hidden: Bool) {
+    init(metric: MobileSnapshot.Metric, now: Date, showUsed: Bool, stale: Bool) {
         let remaining: Double? = if case .percent(let value) = metric.content { value } else { nil }
         self.init(label: metric.label, remaining: remaining, resetsAt: metric.resetsAt, resetHint: metric.resetHint,
-                  now: now, showUsed: showUsed, stale: stale, hidden: hidden)
+                  now: now, showUsed: showUsed, stale: stale)
     }
 }
 
@@ -122,9 +116,6 @@ extension QuotaTile {
         GridRow {
             QuotaTile(label: "Claude and GPT · Weekly with an extra long label", remaining: 100, resetsAt: now.addingTimeInterval(167 * 3600), now: now)
                 .gridCellColumns(2)
-        }
-        GridRow {
-            QuotaTile(label: "Hidden", remaining: 50, now: now, hidden: true).gridCellColumns(2)
         }
     }
     .padding()

@@ -15,7 +15,8 @@ struct RootView: View {
                     UsageScreen(accountID: $accountID, addHost: $addHost)
                         .navigationDestination(item: $accountID) { id in
                             if let host = store.selected, let account = host.snapshot?.account(id) {
-                                AccountDetailScreen(account: account, hidden: store.state.hideValues, showUsed: store.state.showUsed,
+                                AccountDetailScreen(account: account, blurAccountName: store.state.blurAccountNames,
+                                                    showUsed: store.state.showUsed,
                                                     pinned: host.pinnedAccountIDs.contains(account.id),
                                                     togglePin: { store.togglePin(account.id) })
                             } else {
@@ -30,11 +31,6 @@ struct RootView: View {
         }
         .tint(DS.Palette.accent)
         .sheet(isPresented: $addHost) { PairHostView() }
-        .overlay {
-            if scenePhase != .active && store.state.hideValues {
-                Rectangle().fill(.background).ignoresSafeArea().overlay { Label("Quotio", systemImage: "lock.fill").font(DS.Typography.lockScreen) }
-            }
-        }
         .task(id: "\(scenePhase)-\(store.state.selectedHostID ?? "")") {
             guard scenePhase == .active else { store.suspend(); return }
             while !Task.isCancelled {

@@ -40,7 +40,7 @@ struct SettingsScreen: View {
             }
 
             Section("Display") {
-                Toggle("Hide values", isOn: $store.state.hideValues)
+                Toggle("Blur account names", isOn: $store.state.blurAccountNames)
                 Toggle("Show used percentage", isOn: $store.state.showUsed)
                 Toggle("Lowest quota first", isOn: $store.state.lowFirst)
                 Picker("Density", selection: $store.state.density) {
@@ -53,7 +53,7 @@ struct SettingsScreen: View {
                         .disabled(store.state.lowFirst)
                 }
             }
-            .onChange(of: store.state.hideValues) { store.persist() }
+            .onChange(of: store.state.blurAccountNames) { store.persist() }
             .onChange(of: store.state.showUsed) { store.persist() }
             .onChange(of: store.state.lowFirst) { store.persist() }
             .onChange(of: store.state.density) { store.persist() }

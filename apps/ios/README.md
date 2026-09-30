@@ -130,8 +130,8 @@ not trigger a provider refresh with a read-only token. Missing quota is not zero
 reset deadlines do not imply quota has returned to 100%.
 
 Charts use provider-reported dates and the 30 most recent reported buckets, not an
-invented continuous 30-day history. Privacy mode hides values and chart shapes,
-including VoiceOver and widgets. Lock Screen widgets do not display account names.
+invented continuous 30-day history. Privacy mode blurs account names and email addresses
+in the app, VoiceOver and widget configuration. Lock Screen widgets do not display account names.
 Already-rendered system widget content may persist until iOS processes a reload.
 
 Removing a host deletes its local token/cache; revoke on the computer to invalidate

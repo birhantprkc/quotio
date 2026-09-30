@@ -9,7 +9,7 @@ public struct MobileState: Codable, Sendable {
     public var version = 1
     public var hosts: [HostProfile] = []
     public var selectedHostID: String?
-    public var hideValues = false
+    public var blurAccountNames = false
     public var showUsed = false
     /// Provider IDs in the user's order; providers not listed follow in host order.
     public var providerOrder: [String] = []
@@ -18,7 +18,8 @@ public struct MobileState: Codable, Sendable {
     public init() {}
 
     private enum CodingKeys: String, CodingKey {
-        case version, hosts, selectedHostID, hideValues, showUsed, providerOrder, lowFirst, density
+        case version, hosts, selectedHostID, showUsed, providerOrder, lowFirst, density
+        case blurAccountNames = "hideValues"
     }
 
     /// Display preferences added after version 1 fall back to defaults when absent.
@@ -27,7 +28,7 @@ public struct MobileState: Codable, Sendable {
         version = try container.decode(Int.self, forKey: .version)
         hosts = try container.decode([HostProfile].self, forKey: .hosts)
         selectedHostID = try container.decodeIfPresent(String.self, forKey: .selectedHostID)
-        hideValues = try container.decode(Bool.self, forKey: .hideValues)
+        blurAccountNames = try container.decode(Bool.self, forKey: .blurAccountNames)
         showUsed = try container.decode(Bool.self, forKey: .showUsed)
         providerOrder = try container.decodeIfPresent([String].self, forKey: .providerOrder) ?? []
         lowFirst = try container.decodeIfPresent(Bool.self, forKey: .lowFirst) ?? false

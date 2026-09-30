@@ -335,34 +335,6 @@
         }
       }
     },
-    "Activity hidden": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Activity hidden"
-          }
-        },
-        "vi": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Đã ẩn hoạt động"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Activité masquée"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "活动已隐藏"
-          }
-        }
-      }
-    },
     "Add a widget": {
       "localizations": {
         "en": {
@@ -415,6 +387,34 @@
           "stringUnit": {
             "state": "translated",
             "value": "添加主机"
+          }
+        }
+      }
+    },
+    "Blur account names": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Blur account names"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Làm mờ tên tài khoản"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Flouter les noms de compte"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "模糊账户名称"
           }
         }
       }
@@ -867,30 +867,30 @@
         }
       }
     },
-    "Hide values": {
+    "Hide account name": {
       "localizations": {
         "en": {
           "stringUnit": {
             "state": "translated",
-            "value": "Hide values"
+            "value": "Hide account name"
           }
         },
         "vi": {
           "stringUnit": {
             "state": "translated",
-            "value": "Ẩn số liệu"
+            "value": "Ẩn tên tài khoản"
           }
         },
         "fr": {
           "stringUnit": {
             "state": "translated",
-            "value": "Masquer les valeurs"
+            "value": "Masquer le nom du compte"
           }
         },
         "zh-Hans": {
           "stringUnit": {
             "state": "translated",
-            "value": "隐藏数值"
+            "value": "隐藏账户名称"
           }
         }
       }
@@ -1931,6 +1931,34 @@
         }
       }
     },
+    "Show account name": {
+      "localizations": {
+        "en": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Show account name"
+          }
+        },
+        "vi": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Hiện tên tài khoản"
+          }
+        },
+        "fr": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "Afficher le nom du compte"
+          }
+        },
+        "zh-Hans": {
+          "stringUnit": {
+            "state": "translated",
+            "value": "显示账户名称"
+          }
+        }
+      }
+    },
     "Show used percentage": {
       "localizations": {
         "en": {
@@ -1955,34 +1983,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "显示已用百分比"
-          }
-        }
-      }
-    },
-    "Show values": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Show values"
-          }
-        },
-        "vi": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Hiện số liệu"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Afficher les valeurs"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "显示数值"
           }
         }
       }
@@ -2459,34 +2459,6 @@
           "stringUnit": {
             "state": "translated",
             "value": "已用"
-          }
-        }
-      }
-    },
-    "Values hidden": {
-      "localizations": {
-        "en": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Values hidden"
-          }
-        },
-        "vi": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Đã ẩn số liệu"
-          }
-        },
-        "fr": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "Valeurs masquées"
-          }
-        },
-        "zh-Hans": {
-          "stringUnit": {
-            "state": "translated",
-            "value": "数值已隐藏"
           }
         }
       }

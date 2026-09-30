@@ -42,7 +42,7 @@ private func demo() throws -> MobileSnapshot {
     let metric = try JSONDecoder().decode(MobileSnapshot.Metric.self, from: Data(old.utf8))
     #expect(metric.group == nil && metric.amounts == nil)
     let state = try JSONDecoder().decode(MobileState.self, from: Data(#"{"version":1,"hosts":[],"hideValues":true,"showUsed":false}"#.utf8))
-    #expect(state.hideValues && state.providerOrder.isEmpty && !state.lowFirst && state.density == .comfortable)
+    #expect(state.blurAccountNames && state.providerOrder.isEmpty && !state.lowFirst && state.density == .comfortable)
 }
 
 @Test func percentRuleTruncatesAndUsedComplementsDisplayedRemaining() {

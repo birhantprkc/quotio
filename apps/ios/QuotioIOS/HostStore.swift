@@ -28,6 +28,7 @@ final class HostStore {
         } catch { canSave = false; issue = .local(String(localized: "Saved connections could not be loaded.")) }
         #if DEBUG
         if ProcessInfo.processInfo.arguments.contains("--demo") { showDemo() }
+        if ProcessInfo.processInfo.arguments.contains("--blur-account-names") { state.blurAccountNames = true }
         if ProcessInfo.processInfo.arguments.contains("--offline") { issue = .unreachable }
         #endif
     }
