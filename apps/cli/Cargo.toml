@@ -26,6 +26,8 @@ base64 = "0.22"
 ring = "0.17"
 aes-gcm = { version = "0.10.3", default-features = false, features = ["aes", "alloc"] }
 libc = "0.2"
+ratatui = { version = "0.30.2", default-features = false, features = ["crossterm"] }
+crossterm = { version = "0.29.0", default-features = false, features = ["events", "windows"] }
 
 [target.'cfg(target_os = "macos")'.dependencies]
 security-framework = "=3.5.1"

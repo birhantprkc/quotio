@@ -55,6 +55,8 @@ pub enum Command {
     Sharing(SharingArgs),
     /// Collect quota for detected or explicitly selected providers
     Usage(UsageArgs),
+    /// Browse provider quota in an interactive terminal dashboard
+    Tui(TuiArgs),
     /// Serve cached usage through a local read-only HTTP API
     Serve(ServeArgs),
 }
@@ -164,6 +166,28 @@ pub struct UsageArgs {
     /// Write diagnostic logs to stderr
     #[arg(long)]
     pub verbose: bool,
+    /// Use environment/local CLI sources without reading saved accounts
+    #[arg(long)]
+    pub no_saved_accounts: bool,
+    /// Select one saved account ID, or local; requires exactly one provider
+    #[arg(long, requires = "provider", conflicts_with = "no_saved_accounts")]
+    pub account: Option<String>,
+}
+
+#[derive(Clone, Debug, Args)]
+pub struct TuiArgs {
+    /// Select a provider instead of auto-detection; repeat to select more than one
+    #[arg(long, value_enum)]
+    pub provider: Vec<Provider>,
+    /// Total seconds allowed for each provider, including retries
+    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..=3600))]
+    pub timeout: u64,
+    /// Read this TOML config instead of the platform default
+    #[arg(long)]
+    pub config: Option<PathBuf>,
+    /// Disable terminal color
+    #[arg(long)]
+    pub no_color: bool,
     /// Use environment/local CLI sources without reading saved accounts
     #[arg(long)]
     pub no_saved_accounts: bool,

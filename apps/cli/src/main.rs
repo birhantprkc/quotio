@@ -272,6 +272,15 @@ async fn run() -> ExitCode {
                 }
             }
         }
+        Command::Tui(args) => {
+            return match quotio::tui::run(args).await {
+                Ok(code) => ExitCode::from(code),
+                Err(error) => {
+                    eprintln!("{error}");
+                    ExitCode::from(3)
+                }
+            };
+        }
         Command::Usage(args) => {
             let level = if args.verbose {
                 tracing::Level::DEBUG

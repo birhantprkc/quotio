@@ -65,6 +65,21 @@ fn argument_contract() {
         assert!(Cli::try_parse_from(["quotio", "usage", "--timeout", value]).is_err());
     }
     assert!(Cli::try_parse_from(["quotio", "usage", "--provider", "unknown"]).is_err());
+    let CliCommand::Tui(args) = Cli::try_parse_from([
+        "quotio",
+        "tui",
+        "--provider",
+        "mock",
+        "--no-color",
+        "--no-saved-accounts",
+    ])
+    .unwrap()
+    .command
+    else {
+        panic!()
+    };
+    assert_eq!(args.provider, vec![quotio::cli::Provider::Mock]);
+    assert!(args.no_color);
 }
 #[test]
 fn sharing_requires_explicit_network_addresses_and_valid_ports() {
@@ -666,4 +681,109 @@ fn force_and_cache_ttl_contract() {
     ] {
         assert!(Config::parse(invalid).is_err());
     }
+}
+
+#[cfg(unix)]
+#[test]
+fn tui_quit_restores_terminal() {
+    use std::{
+        io::{Read, Write},
+        os::fd::{AsRawFd, FromRawFd},
+        process::Stdio,
+        time::{Duration, Instant},
+    };
+
+    fn attributes(file: &std::fs::File) -> libc::termios {
+        let mut value = std::mem::MaybeUninit::uninit();
+        assert_eq!(
+            unsafe { libc::tcgetattr(file.as_raw_fd(), value.as_mut_ptr()) },
+            0
+        );
+        unsafe { value.assume_init() }
+    }
+
+    let config = ConfigFile::new("");
+    let mut fds = [-1; 2];
+    assert_eq!(
+        unsafe {
+            libc::openpty(
+                &mut fds[0],
+                &mut fds[1],
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+                std::ptr::null_mut(),
+            )
+        },
+        0
+    );
+    let mut master = unsafe { std::fs::File::from_raw_fd(fds[0]) };
+    let slave = unsafe { std::fs::File::from_raw_fd(fds[1]) };
+    let size = libc::winsize {
+        ws_row: 24,
+        ws_col: 100,
+        ws_xpixel: 0,
+        ws_ypixel: 0,
+    };
+    assert_eq!(
+        unsafe { libc::ioctl(slave.as_raw_fd(), libc::TIOCSWINSZ, &size) },
+        0
+    );
+    assert_eq!(
+        unsafe { libc::fcntl(master.as_raw_fd(), libc::F_SETFL, libc::O_NONBLOCK) },
+        0
+    );
+    let before = attributes(&slave);
+    let mut child = Command::new(env!("CARGO_BIN_EXE_quotio"))
+        .args([
+            "tui",
+            "--provider",
+            "mock",
+            "--no-saved-accounts",
+            "--no-color",
+            "--config",
+        ])
+        .arg(&config.0)
+        .env_clear()
+        .env("HOME", config.0.with_extension("home"))
+        .env("QUOTIO_CACHE_DIR", config.0.with_extension("cache"))
+        .stdin(Stdio::from(slave.try_clone().unwrap()))
+        .stdout(Stdio::from(slave.try_clone().unwrap()))
+        .stderr(Stdio::from(slave.try_clone().unwrap()))
+        .spawn()
+        .unwrap();
+    let mut output = Vec::new();
+    let mut answered_position = false;
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while !String::from_utf8_lossy(&output).contains("Demo account") {
+        let mut buffer = [0; 4096];
+        match master.read(&mut buffer) {
+            Ok(count) => output.extend_from_slice(&buffer[..count]),
+            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            result => panic!("PTY read failed: {result:?}"),
+        }
+        if !answered_position && output.windows(4).any(|window| window == b"\x1b[6n") {
+            master.write_all(b"\x1b[1;1R").unwrap();
+            answered_position = true;
+        }
+        assert!(
+            Instant::now() < deadline,
+            "TUI did not render: {}",
+            String::from_utf8_lossy(&output)
+        );
+        std::thread::sleep(Duration::from_millis(10));
+    }
+    master.write_all(b"q").unwrap();
+    let status = loop {
+        if let Some(status) = child.try_wait().unwrap() {
+            break status;
+        }
+        assert!(Instant::now() < deadline, "TUI did not exit");
+        std::thread::sleep(Duration::from_millis(10));
+    };
+    assert!(status.success());
+    let after = attributes(&slave);
+    assert_eq!(
+        before.c_lflag & (libc::ICANON | libc::ECHO),
+        after.c_lflag & (libc::ICANON | libc::ECHO)
+    );
 }

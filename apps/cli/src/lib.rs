@@ -11,6 +11,7 @@ pub mod output;
 pub mod providers;
 pub mod server;
 pub mod settings;
+pub mod tui;
 pub mod usage;
 
 #[cfg(target_os = "macos")]
