@@ -206,10 +206,7 @@ pub(crate) fn parse(input: &str, now: OffsetDateTime) -> Result<ProviderUsage, P
         .next()
         .filter(|s| s.contains('@') && !s.contains(char::is_whitespace))
         .ok_or(ProviderError::InvalidData)?;
-    let mut plan = identity
-        .split_once(" (")
-        .and_then(|(_, rest)| rest.strip_suffix(')'))
-        .map(str::to_owned);
+    let mut plan = Some("Free".into());
     let mut windows = Vec::new();
     for raw_line in input.lines() {
         let normalized = raw_line.replace("**", "");
@@ -326,13 +323,15 @@ pub(crate) fn parse(input: &str, now: OffsetDateTime) -> Result<ProviderUsage, P
         } else if let Some(rest) = line.strip_prefix("Workspace ") {
             let (name, rest) = rest.split_once(':').ok_or(ProviderError::InvalidData)?;
             let amounts = dollars(rest)?;
-            windows.push(window(
+            let mut workspace = window(
                 &format!("Workspace {name} credits"),
                 Quota::Unknown,
                 Some(amounts),
                 now,
                 None,
-            ));
+            );
+            workspace.label = "Workspace credits".into();
+            windows.push(workspace);
         } else if raw_line.starts_with("**") || line.starts_with("Amp ") && !line.trim().is_empty()
         {
             // Do not silently omit a newly introduced quota category.
@@ -570,6 +569,15 @@ mod tests {
         assert_eq!(usage.windows.len(), 5);
     }
     #[test]
+    fn free_tier_ignores_username_in_signed_in_identity() {
+        let usage = parse(
+            "Signed in as demo@example.com (trongnguyen)\nIndividual credits: $4.98 remaining",
+            OffsetDateTime::UNIX_EPOCH,
+        )
+        .unwrap();
+        assert_eq!(usage.account.plan.as_deref(), Some("Free"));
+    }
+    #[test]
     fn swift_amount_free_and_named_subscription_keep_ids_consumption_and_reset_description() {
         let text = "\x1b[32mSigned in as demo@example.com (Pro)\x1b[0m\nAmp Free: $2.50 / $10.00 remaining (replenishes +$0.50/hour)\nAmp Kilowatt Subscription: 60% agent usage and 25% orb usage remaining - resets upon renewal in 2 days\nIndividual credits: $0 remaining\nWorkspace Example: $12.50 remaining";
         let usage = parse(text, OffsetDateTime::UNIX_EPOCH).unwrap();
@@ -716,6 +724,7 @@ mod tests {
         assert_eq!(usage.windows[1].quota, Quota::from_used(Some(40.0)));
         assert_eq!(usage.windows[2].amounts.as_ref().unwrap().remaining, 500.5);
         assert_eq!(usage.windows[4].quota, Quota::Unknown);
+        assert_eq!(usage.windows[4].label, "Workspace credits");
         assert_eq!(usage.windows[4].amounts.as_ref().unwrap().remaining, 0.0);
         assert!(usage.windows.iter().all(|w| w.resets_at.is_none()));
     }
@@ -794,7 +803,7 @@ mod tests {
             .unwrap();
         assert!(balance.contains("balance 10.25 USD remaining"));
         assert!(!balance.contains("unknown"));
-        assert!(text.contains("Workspace Example credits: balance 0.00 USD remaining"));
+        assert!(text.contains("Workspace credits: balance 0.00 USD remaining"));
     }
     #[tokio::test]
     async fn local_key_is_bounded_and_used_only_for_public_amp_host() {
