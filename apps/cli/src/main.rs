@@ -2,7 +2,6 @@ use clap::{Parser, ValueEnum};
 use quotio::{
     cli::{Cli, Command, Format, Provider},
     config::Config,
-    fetch::{Cancellation, CollectRequest, Collector},
     output,
     providers::{EnvironmentCredentials, ProviderContext, SystemClock},
 };
@@ -287,173 +286,28 @@ async fn run() -> ExitCode {
                 )
                 .with(Targets::new().with_target("quotio", level))
                 .init();
-            let config = match Config::load(args.config.as_deref()) {
-                Ok(config) => config,
-                Err(error) => {
-                    eprintln!("{error}");
-                    return ExitCode::from(2);
-                }
-            };
-            if let Err(error) = config.providers() {
-                eprintln!("{error}");
-                return ExitCode::from(2);
-            }
-            let disabled = match config.disabled_providers() {
-                Ok(providers) => providers,
-                Err(error) => {
-                    eprintln!("{error}");
-                    return ExitCode::from(2);
-                }
-            };
-            let automatic = args.provider.is_empty();
-            let selected = args.provider;
-            let mut unique = Vec::new();
-            for provider in selected {
-                if !unique.contains(&provider) {
-                    unique.push(provider);
-                }
-            }
-            let providers = tokio::select! {
-                providers=async {
-                    if let Some(id) = args.account.as_deref().filter(|id| *id != "local") {
-                        quotio::accounts::service::resolved_adapters(quotio::accounts::vault::Vault::for_usage()?, unique[0], id).await
-                    } else if automatic {
-                        quotio::accounts::service::detected_adapters(
-                            disabled,
-                            !args.no_saved_accounts,
-                            Duration::from_secs(args.timeout),
-                        ).await
-                    } else {
-                        quotio::accounts::service::adapters(
-                            unique,
-                            !args.no_saved_accounts,
-                            Duration::from_secs(args.timeout),
-                            args.account.as_deref(),
-                        ).await
-                    }
-                }=>providers,
-                _=tokio::signal::ctrl_c()=>{eprintln!("Account discovery cancelled.");return ExitCode::from(3)},
-            };
-            let providers = match providers {
-                Ok(providers) => providers,
-                Err(error) => {
-                    eprintln!("{error}");
-                    return ExitCode::from(2);
-                }
-            };
-            if providers.is_empty() {
-                eprintln!(
-                    "No providers detected. Sign in to a supported provider or use --provider explicitly."
-                );
-            }
-            tracing::debug!(count = providers.len(), "collecting provider usage");
-            let http = match reqwest::Client::builder()
-                .redirect(reqwest::redirect::Policy::none())
-                .build()
+            let collected = match quotio::usage::collect(quotio::usage::Request {
+                force: args.force,
+                providers: args.provider,
+                timeout: args.timeout,
+                config: args.config,
+                no_saved_accounts: args.no_saved_accounts,
+                account: args.account,
+            })
+            .await
             {
-                Ok(client) => client,
-                Err(_) => {
-                    eprintln!("Could not initialize HTTP client.");
-                    return ExitCode::from(3);
-                }
-            };
-            let collector = Collector {
-                context: ProviderContext {
-                    http,
-                    clock: Arc::new(SystemClock),
-                    credentials: Arc::new(EnvironmentCredentials),
-                },
-            };
-            let cancellation = Cancellation::default();
-            let scope: std::collections::HashSet<String> =
-                providers.iter().map(|provider| provider.id().0).collect();
-            let source_scope: std::collections::HashSet<String> = providers
-                .iter()
-                .filter_map(|provider| provider.account_ref().map(|reference| reference.id))
-                .collect();
-            let saved = !args.no_saved_accounts
-                && providers.iter().any(|provider| {
-                    provider
-                        .account_ref()
-                        .is_some_and(|reference| reference.id != "local")
-                });
-            let request = CollectRequest {
-                providers,
-                timeout: Duration::from_secs(args.timeout),
-                cancellation: cancellation.clone(),
-            };
-            let cache =
-                quotio::cache::UsageCache::platform(Duration::from_secs(config.cache_ttl_seconds));
-            let collection = cache.collect(&collector, request, args.force);
-            tokio::pin!(collection);
-            let report = tokio::select! {
-                report = &mut collection => report,
-                signal = tokio::signal::ctrl_c() => {
-                    if signal.is_err() { eprintln!("Could not listen for Ctrl-C."); }
-                    cancellation.cancel();
-                    collection.await
-                }
-            };
-            let code = report.exit_code();
-            let now = collector.context.clock.now();
-            let ttl = time::Duration::seconds(config.cache_ttl_seconds.min(i64::MAX as u64) as i64);
-            let snapshot = if saved {
-                match quotio::accounts::vault::Vault::for_usage() {
-                    Ok(vault) => {
-                        quotio::accounts::api::resolved_snapshot(vault, report, now, ttl).await
-                    }
-                    Err(error) => Err(error),
-                }
-            } else {
-                quotio::accounts::resolved::Registry::new(&[])
-                    .and_then(|registry| registry.account_list(&[]))
-                    .and_then(|mut accounts| {
-                        accounts.host.capabilities.insert(
-                            "account_write_v2".into(),
-                            quotio::contract::Availability {
-                                available: false,
-                                reason: Some("no_saved_accounts".into()),
-                            },
-                        );
-                        quotio::contract::snapshot::project(accounts, &report, now, ttl)
-                            .map_err(|_| quotio::accounts::AccountError::Snapshot)
-                    })
-            };
-            let mut snapshot = match snapshot {
-                Ok(snapshot) => snapshot,
+                Ok(collected) => collected,
                 Err(error) => {
-                    eprintln!("{error}");
-                    return ExitCode::from(3);
+                    eprintln!("{}", error.message);
+                    return ExitCode::from(error.exit_code);
                 }
             };
-            snapshot.accounts.retain(|account| {
-                scope.contains(&account.provider_id)
-                    && (args.account.is_none()
-                        || args.account.as_deref() == Some("local")
-                        || account
-                            .sources
-                            .iter()
-                            .any(|source| source_scope.contains(&source.id)))
-            });
-            snapshot.usage.retain(|usage| {
-                snapshot
-                    .accounts
-                    .iter()
-                    .any(|account| account.id == usage.account_id)
-            });
-            let failures = output::text::snapshot_failures(&snapshot);
-            snapshot.account_redirects.retain(|_, target| {
-                snapshot
-                    .accounts
-                    .iter()
-                    .any(|account| account.id == *target)
-            });
-            if !failures.is_empty() {
-                eprint!("{failures}");
+            if !collected.diagnostics.is_empty() {
+                eprint!("{}", collected.diagnostics);
             }
             let text = match args.format {
-                Format::Text => output::text::render_snapshot(&snapshot),
-                Format::Json => match output::json::render(&snapshot) {
+                Format::Text => output::text::render_snapshot(&collected.snapshot),
+                Format::Json => match output::json::render(&collected.snapshot) {
                     Ok(json) => format!("{json}\n"),
                     Err(_) => {
                         eprintln!("Could not encode usage report.");
@@ -461,7 +315,7 @@ async fn run() -> ExitCode {
                     }
                 },
             };
-            (text, code)
+            (text, collected.exit_code)
         }
     };
     if io::stdout().lock().write_all(text.as_bytes()).is_err() {
