@@ -18,6 +18,99 @@ private final class HostProtocol: URLProtocol, @unchecked Sendable {
     override func stopLoading() {}
 }
 
+private final class HeldHostProtocol: URLProtocol, @unchecked Sendable {
+    static let started = Mutex<Set<String>>([])
+    static let replies = Mutex<[String: Data]>([:])
+    override class func canInit(with request: URLRequest) -> Bool { true }
+    override class func canonicalRequest(for request: URLRequest) -> URLRequest { request }
+    override func startLoading() {
+        let host = request.url!.host!
+        guard let data = Self.replies.withLock({ $0[host] }) else {
+            Self.started.withLock { $0.insert(host) }
+            return
+        }
+        client?.urlProtocol(self, didReceive: HTTPURLResponse(url: request.url!, statusCode: 200, httpVersion: nil, headerFields: nil)!, cacheStoragePolicy: .notAllowed)
+        client?.urlProtocol(self, didLoad: data)
+        client?.urlProtocolDidFinishLoading(self)
+    }
+    override func stopLoading() {}
+
+    static func waitForRequest(host: String) async throws {
+        for _ in 0..<300 {
+            if started.withLock({ $0.contains(host) }) { return }
+            try await Task.sleep(for: .milliseconds(10))
+        }
+        throw URLError(.timedOut)
+    }
+}
+
+@Test(arguments: [true, false])
+@MainActor func removingHostDuringRefreshAllowsNextRefresh(removeSelected: Bool) async throws {
+    let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+    let storage = MobileStorage(directory: directory)
+    let group = try #require(Bundle.main.object(forInfoDictionaryKey: "QuotioKeychainGroup") as? String)
+    let keychain = MobileKeychain(accessGroup: group, service: "app.quotio.ios.tests.\(UUID().uuidString)")
+    let clientID = String(repeating: "a", count: 43)
+    let token = "qclient.\(clientID).\(String(repeating: "b", count: 43))"
+    var state = MobileState()
+    state.hosts = ["old", "other"].map {
+        HostProfile(id: $0, name: $0, origin: URL(string: "https://\(UUID().uuidString).example.test")!,
+                    clientID: clientID, expiresAt: nil, snapshot: nil)
+    }
+    state.selectedHostID = "old"
+    try storage.save(state)
+    defer {
+        for host in state.hosts {
+            try? keychain.delete(host.id)
+            HeldHostProtocol.started.withLock { $0.remove(host.origin.host!) }
+            HeldHostProtocol.replies.withLock { $0.removeValue(forKey: host.origin.host!) }
+        }
+        try? FileManager.default.removeItem(at: directory)
+    }
+    for host in state.hosts { try keychain.save(token, host: host.id) }
+    let configuration = URLSessionConfiguration.ephemeral
+    configuration.protocolClasses = [HeldHostProtocol.self]
+    let session = URLSession(configuration: configuration)
+    defer { session.invalidateAndCancel() }
+    let store = HostStore(storage: storage, keychain: keychain, makeClient: { QuotioHostHTTPClient(connection: $0, session: session) })
+    let oldRefresh = Task { await store.refresh() }
+    defer { oldRefresh.cancel() }
+    let oldHost = state.hosts[0].origin.host!
+    try await HeldHostProtocol.waitForRequest(host: oldHost)
+    #expect(store.refreshing)
+    store.remove(removeSelected ? "old" : "other")
+    try #require(!store.refreshing)
+    let selected = try #require(store.selected)
+    #expect(selected.id == (removeSelected ? "other" : "old"))
+    let selectedHost = selected.origin.host!
+    HeldHostProtocol.started.withLock { $0.remove(selectedHost) }
+    let nextRefresh = Task { await store.refresh() }
+    defer { nextRefresh.cancel() }
+    try await HeldHostProtocol.waitForRequest(host: selectedHost)
+    oldRefresh.cancel()
+    await oldRefresh.value
+    #expect(store.refreshing)
+    #expect(store.selected?.needsPairing == false)
+    #expect(store.issue == nil)
+    nextRefresh.cancel()
+    await nextRefresh.value
+    #expect(!store.refreshing)
+    let fixtureURL = try #require(Bundle.main.url(forResource: "demo-snapshot", withExtension: "json"))
+    var snapshot = try #require(JSONSerialization.jsonObject(with: Data(contentsOf: fixtureURL)) as? [String: Any])
+    var host = try #require(snapshot["host"] as? [String: Any])
+    host["id"] = selected.id
+    snapshot["host"] = host
+    snapshot["revision"] = 44
+    let data = try JSONSerialization.data(withJSONObject: snapshot)
+    HeldHostProtocol.replies.withLock { $0[selectedHost] = data }
+    await store.refresh()
+    #expect(!store.refreshing)
+    #expect(store.issue == nil)
+    #expect(store.selected?.snapshot?.revision == 44)
+    #expect(try storage.load().hosts.first?.snapshot?.revision == 44)
+    #expect(try keychain.read(removeSelected ? "old" : "other") == nil)
+}
+
 @Test @MainActor func pairingPersistsInKeychainAndRevocationClearsSensitiveCache() async throws {
     let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
     let storage = MobileStorage(directory: directory)

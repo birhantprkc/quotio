@@ -99,7 +99,7 @@ final class HostStore {
             throw error
         }
         demo = false
-        generation = UUID()
+        suspend()
         state = next
         issue = nil
         WidgetCenter.shared.reloadAllTimelines()
@@ -141,7 +141,7 @@ final class HostStore {
     func remove(_ id: String) {
         do {
             if !demo { try keychain.delete(id) }
-            generation = UUID()
+            suspend()
             state.hosts.removeAll { $0.id == id }
             if state.selectedHostID == id { state.selectedHostID = state.hosts.first?.id }
             if demo { demo = false; state = (try storage?.load()) ?? MobileState() }
@@ -163,7 +163,7 @@ final class HostStore {
             guard let url = Bundle.main.url(forResource: "demo-snapshot", withExtension: "json") else { return }
             let snapshot = try QuotioHostSnapshot.decode(Self.rebased(Data(contentsOf: url), to: .now))
             demo = true
-            generation = UUID()
+            suspend()
             state = MobileState()
             state.hosts = [HostProfile(id: snapshot.host.id, name: String(localized: "Demo Mac"),
                                       origin: URL(string: "https://demo.example.invalid")!, clientID: "demo", expiresAt: nil,
