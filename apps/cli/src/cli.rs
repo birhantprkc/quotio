@@ -55,8 +55,8 @@ pub enum Command {
     Sharing(SharingArgs),
     /// Collect quota for detected or explicitly selected providers
     Usage(UsageArgs),
-    /// Browse provider quota in an interactive terminal dashboard
-    Tui(TuiArgs),
+    /// Browse provider quota with interactive prompts
+    Interactive(InteractiveArgs),
     /// Serve cached usage through a local read-only HTTP API
     Serve(ServeArgs),
 }
@@ -175,7 +175,7 @@ pub struct UsageArgs {
 }
 
 #[derive(Clone, Debug, Args)]
-pub struct TuiArgs {
+pub struct InteractiveArgs {
     /// Select a provider instead of auto-detection; repeat to select more than one
     #[arg(long, value_enum)]
     pub provider: Vec<Provider>,
@@ -185,9 +185,6 @@ pub struct TuiArgs {
     /// Read this TOML config instead of the platform default
     #[arg(long)]
     pub config: Option<PathBuf>,
-    /// Disable terminal color
-    #[arg(long)]
-    pub no_color: bool,
     /// Use environment/local CLI sources without reading saved accounts
     #[arg(long)]
     pub no_saved_accounts: bool,

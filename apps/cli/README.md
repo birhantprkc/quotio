@@ -2,7 +2,7 @@
 
 A standalone Rust CLI for provider quota and usage reports. The current registry
 contains 46 real providers: 8 original routes and 38 catalog `Definition`s. `mock`
-is a separate deterministic fixture, not a real provider. An interactive TUI shows
+is a separate deterministic fixture, not a real provider. Interactive mode shows
 the same resolved account snapshot as text and JSON output.
 
 | Group | Providers | Credential path | Verification boundary |
@@ -54,7 +54,7 @@ cargo run -- usage --provider mock --provider mock --timeout 5 --no-color --verb
 cargo run -- usage --config ./config.toml
 cargo run -- usage --provider codex --provider amp --timeout 30
 cargo run -- usage --provider antigravity --provider factory --format json
-cargo run -- tui --provider mock --no-saved-accounts
+cargo run -- interactive --provider mock --no-saved-accounts
 ```
 
 `providers --format json` emits the same versioned provider catalog as HTTP `/v2/providers`, using the selected configuration for enabled flags. Text output remains the default. Contract tests validate the runtime registry against OpenAPI and share an offline usage fixture with Swift.
@@ -64,20 +64,18 @@ an integer from 1 to 3600 seconds, default 10, applied separately to each provid
 Text output is always plain, so `--no-color` is accepted without changing it.
 `--verbose` sends logs to stderr. Reports go to stdout.
 
-## Interactive TUI
+## Interactive mode
 
-Run `quotio tui` to auto-detect accounts, or repeat `--provider` to select them
-explicitly. The dashboard uses a two-pane account and quota layout in wide terminals
-and a compact single-pane layout below 88 columns. It requires at least 50 columns
-and 14 rows. `--no-color` and `NO_COLOR` disable color without removing status text.
+Run `quotio interactive` to auto-detect accounts, or repeat `--provider` to select
+them explicitly. The prompt lists accounts, renders quota details, and waits for the
+next action without taking over the terminal screen.
 
-| Key | Action |
+| Input | Action |
 | --- | --- |
-| Arrow keys or `j`/`k` | Select account |
-| Page Up / Page Down | Scroll quota metrics |
-| `r` | Force refresh |
-| `?` | Show or close help |
-| `q`, Escape or Ctrl-C | Exit and restore the terminal |
+| Account number | Select an account |
+| `r` | Refresh selected providers |
+| `a` | Return to account selection |
+| `q` | Exit |
 
 ## Developer-signed macOS builds
 
@@ -658,8 +656,9 @@ Antigravity tries quota summary with a project, then without a project when need
 then model quota. Optional project discovery failures do not block this fallback;
 authentication and rate-limit failures stop it. Every window records its source.
 
-The TUI and noninteractive output share snapshot collection. The TUI renders the
-resolved host contract directly and does not parse CLI text or change provider fetch logic.
+Interactive and noninteractive output share snapshot collection. Interactive mode
+renders the resolved host contract directly and does not parse CLI text or change
+provider fetch logic.
 
 ## Verification
 

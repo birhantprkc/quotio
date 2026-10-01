@@ -272,12 +272,12 @@ async fn run() -> ExitCode {
                 }
             }
         }
-        Command::Tui(args) => {
-            return match quotio::tui::run(args).await {
+        Command::Interactive(args) => {
+            return match quotio::interactive::run(args).await {
                 Ok(code) => ExitCode::from(code),
-                Err(error) => {
+                Err((error, code)) => {
                     eprintln!("{error}");
-                    ExitCode::from(3)
+                    ExitCode::from(code)
                 }
             };
         }
