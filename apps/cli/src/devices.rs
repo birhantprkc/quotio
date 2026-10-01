@@ -151,7 +151,7 @@ pub async fn run(args: DevicesArgs) -> Result<Value, &'static str> {
         {
             return Err("invalid_host_response");
         }
-        let mut pairing = json!({"pairing_version":if certificate.is_some() { 2 } else { 1 },
+        let mut pairing = json!({"pairing_version":2,
             "host_name":reqwest::Url::parse(&origin).map_err(|_| "invalid_public_url")?.host_str(),
             "origin":origin,"host_id":value["host_id"],"client_id":value["client"]["id"],
             "expires_at":value["client"]["expires_at"],"token":value["token"]});

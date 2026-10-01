@@ -66,7 +66,8 @@ async fn device_commands_issue_once_list_revoke_and_refuse_remote_owner_transpor
         let value: Value = serde_json::from_slice(&output.stdout).unwrap();
         assert!(value.get(expected).is_some());
         if expected == "pairing_version" {
-            assert_eq!(value["pairing_version"], 1);
+            assert_eq!(value["pairing_version"], 2);
+            assert!(value.get("certificate").is_none());
             assert_eq!(value["origin"], "https://host.example.test");
             assert_eq!(value["client_id"], "phone");
             assert_eq!(value["token"], "synthetic-phone-credential");
