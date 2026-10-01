@@ -20,12 +20,17 @@ pub async fn run() -> Result<u8, (String, u8)> {
         .authorize_interactively()
         .await
         .map_err(|error| (error.to_string(), 2))?;
+    #[cfg(target_os = "linux")]
+    let no_saved_accounts = std::env::var_os("QUOTIO_VAULT_KEY_FILE").is_none()
+        && std::env::var_os("QUOTIO_VAULT_KEY_FD").is_none();
+    #[cfg(not(target_os = "linux"))]
+    let no_saved_accounts = false;
     let request = usage::Request {
         force: false,
         providers: Vec::new(),
         timeout: 10,
         config: None,
-        no_saved_accounts: false,
+        no_saved_accounts,
         account: None,
     };
     let mut force = false;

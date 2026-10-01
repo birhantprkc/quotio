@@ -729,8 +729,9 @@ fn root_command_starts_interactive_cli() {
         );
         std::thread::sleep(Duration::from_millis(10));
     };
-    assert_eq!(status.code(), Some(2));
+    assert_eq!(status.code(), Some(3));
     let output = String::from_utf8_lossy(&output);
     assert!(output.contains("Quotio"));
     assert!(output.contains("Checking providers"));
+    assert!(output.contains("No providers detected"));
 }
