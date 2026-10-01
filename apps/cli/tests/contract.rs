@@ -118,10 +118,19 @@ fn provider_coverage_table_matches_the_runtime_registry() {
         ));
     }
     let document = include_str!("../docs/provider-coverage.md");
-    assert_eq!(
-        document.split_once("<!-- registry-table -->\n").unwrap().1,
-        table
-    );
+    for document in [
+        document.to_owned(),
+        document.replace("\r\n", "\n").replace('\n', "\r\n"),
+    ] {
+        assert_eq!(
+            document
+                .replace("\r\n", "\n")
+                .split_once("<!-- registry-table -->\n")
+                .unwrap()
+                .1,
+            table
+        );
+    }
 }
 
 struct Fixture;
