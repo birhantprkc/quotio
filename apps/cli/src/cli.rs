@@ -5,7 +5,7 @@ use std::path::PathBuf;
 #[command(name = "quotio", version, about = "Check provider quota and usage", color = clap::ColorChoice::Never)]
 pub struct Cli {
     #[command(subcommand)]
-    pub command: Command,
+    pub command: Option<Command>,
 }
 #[derive(Debug, Subcommand)]
 pub enum Command {
@@ -55,8 +55,6 @@ pub enum Command {
     Sharing(SharingArgs),
     /// Collect quota for detected or explicitly selected providers
     Usage(UsageArgs),
-    /// Browse provider quota with interactive prompts
-    Interactive(InteractiveArgs),
     /// Serve cached usage through a local read-only HTTP API
     Serve(ServeArgs),
 }
@@ -166,25 +164,6 @@ pub struct UsageArgs {
     /// Write diagnostic logs to stderr
     #[arg(long)]
     pub verbose: bool,
-    /// Use environment/local CLI sources without reading saved accounts
-    #[arg(long)]
-    pub no_saved_accounts: bool,
-    /// Select one saved account ID, or local; requires exactly one provider
-    #[arg(long, requires = "provider", conflicts_with = "no_saved_accounts")]
-    pub account: Option<String>,
-}
-
-#[derive(Clone, Debug, Args)]
-pub struct InteractiveArgs {
-    /// Select a provider instead of auto-detection; repeat to select more than one
-    #[arg(long, value_enum)]
-    pub provider: Vec<Provider>,
-    /// Total seconds allowed for each provider, including retries
-    #[arg(long, default_value_t = 10, value_parser = clap::value_parser!(u64).range(1..=3600))]
-    pub timeout: u64,
-    /// Read this TOML config instead of the platform default
-    #[arg(long)]
-    pub config: Option<PathBuf>,
     /// Use environment/local CLI sources without reading saved accounts
     #[arg(long)]
     pub no_saved_accounts: bool,

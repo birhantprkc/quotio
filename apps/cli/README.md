@@ -44,6 +44,7 @@ Use Rust stable with edition 2024 support. The package declares Rust 1.88 or new
 this revision was verified with Rust 1.92.0. `Cargo.lock` pins dependencies.
 
 ```sh
+cargo run --
 cargo run -- --help
 cargo run -- providers
 cargo run -- providers --format json --config ./config.toml
@@ -54,7 +55,6 @@ cargo run -- usage --provider mock --provider mock --timeout 5 --no-color --verb
 cargo run -- usage --config ./config.toml
 cargo run -- usage --provider codex --provider amp --timeout 30
 cargo run -- usage --provider antigravity --provider factory --format json
-cargo run -- interactive --provider mock --no-saved-accounts
 ```
 
 `providers --format json` emits the same versioned provider catalog as HTTP `/v2/providers`, using the selected configuration for enabled flags. Text output remains the default. Contract tests validate the runtime registry against OpenAPI and share an offline usage fixture with Swift.
@@ -66,9 +66,9 @@ Text output is always plain, so `--no-color` is accepted without changing it.
 
 ## Interactive mode
 
-Run `quotio interactive` to auto-detect accounts, or repeat `--provider` to select
-them explicitly. The prompt lists accounts, renders quota details, and waits for the
-next action without taking over the terminal screen.
+Run `quotio` without a subcommand to auto-detect accounts. The prompt lists accounts,
+renders quota details, and waits for the next action without taking over the terminal
+screen. Existing subcommands such as `quotio usage` remain noninteractive.
 
 | Input | Action |
 | --- | --- |

@@ -57,7 +57,7 @@ fn argument_contract() {
         "--verbose",
     ])
     .unwrap();
-    let CliCommand::Usage(args) = parsed.command else {
+    let Some(CliCommand::Usage(args)) = parsed.command else {
         panic!()
     };
     assert_eq!(args.provider.len(), 2);
@@ -65,19 +65,8 @@ fn argument_contract() {
         assert!(Cli::try_parse_from(["quotio", "usage", "--timeout", value]).is_err());
     }
     assert!(Cli::try_parse_from(["quotio", "usage", "--provider", "unknown"]).is_err());
-    let CliCommand::Interactive(args) = Cli::try_parse_from([
-        "quotio",
-        "interactive",
-        "--provider",
-        "mock",
-        "--no-saved-accounts",
-    ])
-    .unwrap()
-    .command
-    else {
-        panic!()
-    };
-    assert_eq!(args.provider, vec![quotio::cli::Provider::Mock]);
+    assert!(Cli::try_parse_from(["quotio"]).unwrap().command.is_none());
+    assert!(Cli::try_parse_from(["quotio", "interactive"]).is_err());
 }
 #[test]
 fn sharing_requires_explicit_network_addresses_and_valid_ports() {
@@ -641,7 +630,7 @@ fn force_and_cache_ttl_contract() {
         vec!["quotio", "usage", "--force"],
         vec!["quotio", "usage", "--provider", "codex", "--force"],
     ] {
-        let CliCommand::Usage(args) = Cli::try_parse_from(args).unwrap().command else {
+        let Some(CliCommand::Usage(args)) = Cli::try_parse_from(args).unwrap().command else {
             panic!()
         };
         assert!(args.force);
@@ -683,9 +672,9 @@ fn force_and_cache_ttl_contract() {
 
 #[cfg(unix)]
 #[test]
-fn interactive_cli_renders_and_quits() {
+fn root_command_starts_interactive_cli() {
     use std::{
-        io::{Read, Write},
+        io::Read,
         os::fd::{AsRawFd, FromRawFd},
         process::Stdio,
         time::{Duration, Instant},
@@ -712,14 +701,6 @@ fn interactive_cli_renders_and_quits() {
         0
     );
     let mut child = Command::new(env!("CARGO_BIN_EXE_quotio"))
-        .args([
-            "interactive",
-            "--provider",
-            "mock",
-            "--no-saved-accounts",
-            "--config",
-        ])
-        .arg(&config.0)
         .env_clear()
         .env("HOME", config.0.with_extension("home"))
         .env("QUOTIO_CACHE_DIR", config.0.with_extension("cache"))
@@ -730,27 +711,26 @@ fn interactive_cli_renders_and_quits() {
         .unwrap();
     let mut output = Vec::new();
     let deadline = Instant::now() + Duration::from_secs(5);
-    while !String::from_utf8_lossy(&output).contains("Action  [r] refresh") {
+    let status = loop {
         let mut buffer = [0; 4096];
         match master.read(&mut buffer) {
             Ok(count) => output.extend_from_slice(&buffer[..count]),
             Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {}
+            Err(error) if error.raw_os_error() == Some(libc::EIO) => {}
             result => panic!("PTY read failed: {result:?}"),
         }
-        assert!(
-            Instant::now() < deadline,
-            "interactive CLI did not render: {}",
-            String::from_utf8_lossy(&output)
-        );
-        std::thread::sleep(Duration::from_millis(10));
-    }
-    master.write_all(b"q\n").unwrap();
-    let status = loop {
         if let Some(status) = child.try_wait().unwrap() {
             break status;
         }
-        assert!(Instant::now() < deadline, "interactive CLI did not exit");
+        assert!(
+            Instant::now() < deadline,
+            "interactive CLI did not finish: {}",
+            String::from_utf8_lossy(&output)
+        );
         std::thread::sleep(Duration::from_millis(10));
     };
-    assert!(status.success());
+    assert_eq!(status.code(), Some(2));
+    let output = String::from_utf8_lossy(&output);
+    assert!(output.contains("Quotio"));
+    assert!(output.contains("Checking providers"));
 }

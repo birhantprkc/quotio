@@ -1,5 +1,4 @@
 use crate::{
-    cli::InteractiveArgs,
     contract::{Account, Freshness, Metric, Snapshot, Usage},
     domain::Quota,
     usage,
@@ -10,17 +9,17 @@ use std::{
 };
 use time::OffsetDateTime;
 
-pub async fn run(args: InteractiveArgs) -> Result<u8, (String, u8)> {
+pub async fn run() -> Result<u8, (String, u8)> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(("Interactive mode requires a terminal.".into(), 3));
     }
     let request = usage::Request {
         force: false,
-        providers: args.provider,
-        timeout: args.timeout,
-        config: args.config,
-        no_saved_accounts: args.no_saved_accounts,
-        account: args.account,
+        providers: Vec::new(),
+        timeout: 10,
+        config: None,
+        no_saved_accounts: false,
+        account: None,
     };
     let mut force = false;
     let mut selected_id = None;

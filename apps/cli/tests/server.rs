@@ -21,13 +21,14 @@ impl Drop for Config {
 
 #[test]
 fn server_argument_contract() {
-    let Command::Serve(args) = Cli::try_parse_from(["quotio", "serve"]).unwrap().command else {
+    let Some(Command::Serve(args)) = Cli::try_parse_from(["quotio", "serve"]).unwrap().command
+    else {
         panic!()
     };
     assert_eq!(args.listen.to_string(), "127.0.0.1:6767");
     assert_eq!(args.refresh_interval, None);
     assert!(args.account_vault_namespace.is_none());
-    let Command::Serve(isolated) = Cli::try_parse_from([
+    let Some(Command::Serve(isolated)) = Cli::try_parse_from([
         "quotio",
         "serve",
         "--manage",
@@ -71,7 +72,7 @@ fn server_argument_contract() {
     ] {
         assert!(Cli::try_parse_from(["quotio", "serve"].into_iter().chain(args)).is_err());
     }
-    let Command::Serve(disabled) =
+    let Some(Command::Serve(disabled)) =
         Cli::try_parse_from(["quotio", "serve", "--refresh-interval", "0"])
             .unwrap()
             .command

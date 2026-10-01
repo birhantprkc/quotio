@@ -89,7 +89,16 @@ async fn run() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    let (text, code) = match cli.command {
+    let Some(command) = cli.command else {
+        return match quotio::interactive::run().await {
+            Ok(code) => ExitCode::from(code),
+            Err((error, code)) => {
+                eprintln!("{error}");
+                ExitCode::from(code)
+            }
+        };
+    };
+    let (text, code) = match command {
         Command::MigrationInspect {
             piv_envelope,
             piv_fingerprint,
@@ -272,15 +281,6 @@ async fn run() -> ExitCode {
                 }
             }
         }
-        Command::Interactive(args) => {
-            return match quotio::interactive::run(args).await {
-                Ok(code) => ExitCode::from(code),
-                Err((error, code)) => {
-                    eprintln!("{error}");
-                    ExitCode::from(code)
-                }
-            };
-        }
         Command::Usage(args) => {
             let level = if args.verbose {
                 tracing::Level::DEBUG
@@ -346,7 +346,7 @@ mod tests {
         ] {
             let cli =
                 Cli::try_parse_from(["quotio", "accounts", "add", "--provider", provider]).unwrap();
-            let Command::Accounts(args) = cli.command else {
+            let Some(Command::Accounts(args)) = cli.command else {
                 panic!("account command");
             };
             assert_eq!(
@@ -360,7 +360,7 @@ mod tests {
     async fn late_claude_input_keeps_exchange_and_commit_alive() {
         let cli =
             Cli::try_parse_from(["quotio", "accounts", "add", "--provider", "claude"]).unwrap();
-        let Command::Accounts(args) = cli.command else {
+        let Some(Command::Accounts(args)) = cli.command else {
             panic!("account command")
         };
         let start = tokio::time::Instant::now();
