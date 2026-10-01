@@ -13,6 +13,13 @@ pub async fn run() -> Result<u8, (String, u8)> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         return Err(("Interactive mode requires a terminal.".into(), 3));
     }
+    #[cfg(target_os = "macos")]
+    let vault = crate::accounts::vault::Vault::system().map_err(|error| (error.to_string(), 2))?;
+    #[cfg(target_os = "macos")]
+    vault
+        .authorize_interactively()
+        .await
+        .map_err(|error| (error.to_string(), 2))?;
     let request = usage::Request {
         force: false,
         providers: Vec::new(),
