@@ -150,6 +150,6 @@ physical iPhone over LAN and VPN, exercise widget timing outside developer mode,
 verify fresh/revoked credentials on each host OS, archive and inspect entitlements.
 No APNs, Live Activities or task-progress source is included in this release.
 
-The inherited macOS app-icon PNG currently retains an alpha channel. Replace it
-with the final opaque iOS icon before App Store validation. The source is retained
-unchanged until that distribution asset is prepared.
+The iOS app icon is a 1024 × 1024 RGB PNG with no alpha channel or transparent
+pixels. The icon transparency blocker is resolved; App Store validation is still
+required for the archived build.
