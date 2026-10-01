@@ -56,24 +56,7 @@ public final class AppKitUpdaterIconAdapter: UpdaterIconApplying {
     public init() {}
 
     public func applyUpdateChannel(_ channel: UpdateChannel) {
-        let iconName = channel == .beta ? "AppIconBetaImage" : "AppIconImage"
-        guard let iconImage = NSImage(named: iconName) else {
-            NSApplication.shared.applicationIconImage = nil
-            return
-        }
-
-        let displaySize = NSSize(width: 256, height: 256)
-        let roundedIcon = NSImage(size: displaySize, flipped: false) { rect in
-            let path = NSBezierPath(
-                roundedRect: rect,
-                xRadius: rect.width * 0.22,
-                yRadius: rect.height * 0.22
-            )
-            path.addClip()
-            iconImage.draw(in: rect)
-            return true
-        }
-        NSApplication.shared.applicationIconImage = channel == .beta ? roundedIcon : nil
+        NSApplication.shared.applicationIconImage = nil
     }
 }
 

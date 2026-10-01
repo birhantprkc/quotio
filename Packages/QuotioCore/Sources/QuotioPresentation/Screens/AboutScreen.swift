@@ -79,7 +79,7 @@ public struct AboutScreen: View {
                     .frame(width: 160, height: 160)
                     .blur(radius: 40)
 
-                Image(updateModel.snapshot.channel == .beta ? "AppIconBetaImage" : "AppIconImage")
+                Image("AppIconImage")
                     .resizable()
                     .frame(width: 96, height: 96)
                     .clipShape(RoundedRectangle(cornerRadius: 22))
