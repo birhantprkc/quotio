@@ -54,7 +54,7 @@ pub(super) struct Sharing {
 #[derive(Default)]
 struct Endpoint {
     listener: Option<tokio::task::JoinHandle<()>>,
-    tls_handle: Option<axum_server::Handle>,
+    tls_handle: Option<axum_server::Handle<SocketAddr>>,
     certificate: Option<String>,
     mode: Mode,
     address: Option<SocketAddr>,
@@ -257,10 +257,11 @@ impl Sharing {
             let listener = listener.into_std().map_err(|_| {
                 ApiError(StatusCode::SERVICE_UNAVAILABLE, "sharing_tls_unavailable")
             })?;
+            let server = axum_server::from_tcp_rustls(listener, tls.clone())
+                .map_err(|_| ApiError(StatusCode::SERVICE_UNAVAILABLE, "sharing_tls_unavailable"))?
+                .handle(handle);
             tokio::spawn(async move {
-                let server = axum_server::from_tcp_rustls(listener, tls.clone())
-                    .handle(handle)
-                    .serve(router.into_make_service());
+                let server = server.serve(router.into_make_service());
                 tokio::pin!(server);
                 // Renew the short-lived leaf while keeping the QR-trusted CA stable.
                 let period = std::time::Duration::from_secs(30 * 24 * 60 * 60);
@@ -345,6 +346,7 @@ mod tests {
                 listener.into_std().unwrap(),
                 identity.tls(address.ip()).unwrap(),
             )
+            .unwrap()
             .handle(handle.clone())
             .serve(app.into_make_service()),
         );
@@ -609,6 +611,7 @@ mod tests {
         let handle = axum_server::Handle::new();
         let server = tokio::spawn(
             axum_server::from_tcp_rustls(listener.into_std().unwrap(), tls)
+                .unwrap()
                 .handle(handle.clone())
                 .serve(app.into_make_service()),
         );
