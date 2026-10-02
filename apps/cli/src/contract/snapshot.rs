@@ -3,7 +3,7 @@ use super::*;
 use crate::domain::{AccountRef, ProviderUsage, UsageReport};
 use crate::error::ProviderError;
 
-fn external_id(provider: &str, reference: Option<&AccountRef>) -> String {
+pub(crate) fn external_id(provider: &str, reference: Option<&AccountRef>) -> String {
     format!(
         "external-{}",
         crate::cache::fingerprint(&[provider, reference.map_or("local", |r| r.id.as_str())])
@@ -15,14 +15,24 @@ pub(crate) fn external_refresh_source<'a>(
     provider: &str,
     id: &str,
 ) -> Option<&'a str> {
-    report.providers.iter().find_map(|usage| {
-        let reference = usage.account_ref.as_ref();
-        (usage.provider.0 == provider
-            && reference
-                .is_none_or(|r| r.id == "local" || r.origin == Some(AccountOrigin::BorrowedProxy))
-            && external_id(provider, reference) == id)
-            .then(|| reference.map_or("local", |r| r.id.as_str()))
-    })
+    report
+        .providers
+        .iter()
+        .map(|usage| (&usage.provider, usage.account_ref.as_ref()))
+        .chain(
+            report
+                .failures
+                .iter()
+                .map(|failure| (&failure.provider, failure.account_ref.as_ref())),
+        )
+        .find_map(|(provider_id, reference)| {
+            (provider_id.0 == provider
+                && reference.is_none_or(|r| {
+                    r.id == "local" || r.origin == Some(AccountOrigin::BorrowedProxy)
+                })
+                && external_id(provider, reference) == id)
+                .then(|| reference.map_or("local", |r| r.id.as_str()))
+        })
 }
 
 fn reference_matches(provider: &str, reference: Option<&AccountRef>, source: &str) -> bool {
@@ -41,18 +51,28 @@ fn same_provider_account(left: &ProviderUsage, right: &ProviderUsage) -> bool {
 }
 
 fn external_source(id: String, reference: Option<&AccountRef>) -> Source {
+    let borrowed_proxy = reference.is_some_and(|r| r.origin == Some(AccountOrigin::BorrowedProxy));
     Source {
         id,
         origin: reference
             .and_then(|reference| reference.origin)
             .unwrap_or(AccountOrigin::BorrowedNative),
-        kind: "external_observation".into(),
+        kind: if borrowed_proxy {
+            "cli_proxy_auth_file"
+        } else {
+            "external_observation"
+        }
+        .into(),
         location: None,
         keychain_account: None,
         enabled: true,
         selected: false,
         state: ConnectionState::NotChecked,
-        refresh_owner: RefreshOwner::None,
+        refresh_owner: if borrowed_proxy {
+            RefreshOwner::ProviderTool
+        } else {
+            RefreshOwner::None
+        },
         issue: None,
         actions: Vec::new(),
     }
@@ -116,6 +136,44 @@ fn include_external(accounts: &mut Vec<Account>, report: &UsageReport) {
             active: false,
             state: ConnectionState::NotChecked,
             sources: vec![external_source(id, reference)],
+            actions: Vec::new(),
+        });
+    }
+    // These references came from discovered files/keys, not failed native login probes.
+    for failure in &report.failures {
+        let Some(reference) = failure
+            .account_ref
+            .as_ref()
+            .filter(|reference| reference.origin == Some(AccountOrigin::BorrowedProxy))
+        else {
+            continue;
+        };
+        if accounts.iter().any(|account| {
+            account.provider_id == failure.provider.0
+                && account.sources.iter().any(|source| {
+                    reference_matches(&failure.provider.0, Some(reference), &source.id)
+                })
+        }) {
+            continue;
+        }
+        let id = external_id(&failure.provider.0, Some(reference));
+        let enabled = failure.code != ProviderError::SourceDisabled;
+        let mut source = external_source(id.clone(), Some(reference));
+        source.enabled = enabled;
+        accounts.push(Account {
+            id,
+            provider_id: failure.provider.0.clone(),
+            display_name: reference.label.clone(),
+            user_label: None,
+            identity: Identity {
+                evidence: IdentityEvidence::Unknown,
+                username: None,
+                email: None,
+            },
+            enabled,
+            active: false,
+            state: ConnectionState::NotChecked,
+            sources: vec![source],
             actions: Vec::new(),
         });
     }

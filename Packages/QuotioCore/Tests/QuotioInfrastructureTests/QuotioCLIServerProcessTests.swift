@@ -38,6 +38,7 @@ final class QuotioCLIServerProcessTests: XCTestCase {
             configurationURL: directory.appendingPathComponent("config.toml"),
             accountDataDirectory: directory.appendingPathComponent("accounts"),
             proxyAuthDirectory: proxyAuthDirectory,
+            proxyConfigurationURL: directory.appendingPathComponent("proxy.yaml"),
             initialPreferences: { (ProviderTrackingPreferences(disabledProviders: [.copilot], automaticallyDiscoverLogins: false), RefreshPreferences(cadence: .manual), ["disabled.json"]) },
             accountVaultNamespace: "quotio-macos-test",
             proxyURL: { "http://proxy.example:8080" }
@@ -59,6 +60,7 @@ final class QuotioCLIServerProcessTests: XCTestCase {
         XCTAssertFalse(launchedArguments.contains("--provider"))
         XCTAssertTrue(launchedArguments.contains("--account-vault-namespace\nquotio-macos-test\n"))
         XCTAssertTrue(launchedArguments.contains("--cli-proxy-auth-dir\n\(proxyAuthDirectory.path)\n"))
+        XCTAssertTrue(launchedArguments.contains("--cli-proxy-config\n\(directory.appendingPathComponent("proxy.yaml").path)\n"))
         let launchedEnvironment = try String(contentsOf: environment, encoding: .utf8)
         XCTAssertTrue(launchedEnvironment.hasPrefix((ProcessInfo.processInfo.environment["PATH"] ?? "") + "\n"))
         XCTAssertTrue(launchedEnvironment.contains("\nhttp://proxy.example:8080\n"))

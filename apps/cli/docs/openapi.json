@@ -4790,7 +4790,7 @@
   "x-quotio-parent-pipe": {
     "version": 2,
     "bootstrap_schema": "#/components/schemas/Bootstrap",
-    "description": "Inherited stdin JSON token/preferences line (maximum 16 KiB) and lifetime pipe; one stdout JSON record after bind. Authenticate /v2/status before use. An absolute --cli-proxy-auth-dir may provide read-only borrowed Codex, Claude, GitHub Copilot, Antigravity, Kiro, and Vertex auth files."
+    "description": "Inherited stdin JSON token/preferences line (maximum 16 KiB) and lifetime pipe; one stdout JSON record after bind. Authenticate /v2/status before use. Absolute --cli-proxy-auth-dir and --cli-proxy-config paths provide read-only CLIProxyAPI auth files and supported provider keys. These options also work without parent-pipe mode. See README.md for supported formats and quota APIs."
   },
   "x-quotio-account-idempotency": {
     "successful_writes": "atomic protected-vault receipt across restart",

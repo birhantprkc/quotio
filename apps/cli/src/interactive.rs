@@ -30,6 +30,8 @@ pub async fn run() -> Result<u8, (String, u8)> {
         providers: Vec::new(),
         timeout: 10,
         config: None,
+        cli_proxy_auth_dir: None,
+        cli_proxy_config: None,
         no_saved_accounts,
         account: None,
     };

@@ -88,6 +88,7 @@ enum CompositionRoot {
         )
         let quotioServer = QuotioCLIServerProcess(
             proxyAuthDirectory: URL(fileURLWithPath: paths.authDirectoryPath, isDirectory: true),
+            proxyConfigurationURL: URL(fileURLWithPath: paths.configPath),
             initialPreferences: {
                 (providerTrackingRepository.load(), UserDefaultsRefreshPreferencesRepository().load(), authFileState.disabledAuthFileNames())
             },

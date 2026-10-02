@@ -158,6 +158,12 @@ pub struct UsageArgs {
     /// Read this TOML config instead of the platform default
     #[arg(long)]
     pub config: Option<PathBuf>,
+    /// Read CLIProxyAPI auth files from this absolute directory, without modifying them
+    #[arg(long)]
+    pub cli_proxy_auth_dir: Option<PathBuf>,
+    /// Read provider keys from this absolute CLIProxyAPI YAML config (not proxy client keys)
+    #[arg(long)]
+    pub cli_proxy_config: Option<PathBuf>,
     /// Disable terminal color (output is currently always plain)
     #[arg(long)]
     pub no_color: bool,
@@ -167,8 +173,8 @@ pub struct UsageArgs {
     /// Use environment/local CLI sources without reading saved accounts
     #[arg(long)]
     pub no_saved_accounts: bool,
-    /// Select one saved account ID, or local; requires exactly one provider
-    #[arg(long, requires = "provider", conflicts_with = "no_saved_accounts")]
+    /// Select one account/source ID, or local; requires exactly one provider
+    #[arg(long, requires = "provider")]
     pub account: Option<String>,
 }
 
@@ -322,8 +328,11 @@ pub struct ServeArgs {
     #[arg(long, requires = "account_vault_namespace")]
     pub account_data_dir: Option<PathBuf>,
     /// Read supported CLIProxyAPI auth files without importing or modifying them
-    #[arg(long, requires_all = ["manage", "parent_pipe"])]
+    #[arg(long)]
     pub cli_proxy_auth_dir: Option<PathBuf>,
+    /// Read provider keys from this absolute CLIProxyAPI YAML config (not proxy client keys)
+    #[arg(long)]
+    pub cli_proxy_config: Option<PathBuf>,
     /// Enable account/auth/settings/refresh writes; requires QUOTIO_SERVER_TOKEN
     #[arg(long)]
     pub manage: bool,

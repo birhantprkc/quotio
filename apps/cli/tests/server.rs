@@ -60,8 +60,6 @@ fn server_argument_contract() {
         vec!["--token", "must-not-be-in-argv"],
         vec!["--account-vault-namespace", "manual-test"],
         vec!["--account-data-dir", "/tmp/quotio-manual-test"],
-        vec!["--cli-proxy-auth-dir", "/tmp/quotio-proxy-auth"],
-        vec!["--manage", "--cli-proxy-auth-dir", "/tmp/quotio-proxy-auth"],
         vec!["--manage", "--account-vault-namespace", "../production"],
         vec![
             "--manage",
@@ -96,6 +94,7 @@ async fn startup_rejects_remote_bind_empty_selection_and_occupied_port() {
         account_vault_namespace: None,
         account_data_dir: None,
         cli_proxy_auth_dir: None,
+        cli_proxy_config: None,
         manage: false,
         public_url: None,
         allow_origin: vec![],

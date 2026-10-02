@@ -361,7 +361,12 @@ pub fn capability(provider: Provider) -> ProviderCapability {
         provider,
         Provider::Codex
             | Provider::Antigravity
-            | Provider::Catalog("claude" | "copilot" | "kiro" | "vertexai")
+            | Provider::Catalog("claude" | "copilot" | "gemini" | "kiro" | "vertexai")
+            | Provider::OpenRouter
+            | Provider::Synthetic
+            | Provider::Zai
+            | Provider::MiniMax
+            | Provider::Catalog("deepseek" | "moonshot" | "venice" | "poe")
     ) {
         source_references.push(SourceCapability {
             kind: "cli_proxy_auth_file",

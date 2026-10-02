@@ -668,13 +668,24 @@ pub(super) async fn validate_refresh_account(
     provider: Provider,
     id: &str,
 ) -> Result<(), ApiError> {
-    if state
-        .proxy_auth_directory
-        .as_deref()
-        .is_some_and(|directory| {
-            crate::accounts::proxy::adapters(directory, &[provider], Some(id), &[])
-                .is_ok_and(|accounts| !accounts.is_empty())
-        })
+    if [
+        crate::accounts::proxy::sources(
+            state.proxy_auth_directory.as_deref(),
+            None,
+            &[provider],
+            Some(id),
+            &[],
+        ),
+        crate::accounts::proxy::sources(
+            None,
+            state.proxy_configuration.as_deref(),
+            &[provider],
+            Some(id),
+            &[],
+        ),
+    ]
+    .into_iter()
+    .any(|sources| sources.is_ok_and(|accounts| !accounts.is_empty()))
     {
         return Ok(());
     }

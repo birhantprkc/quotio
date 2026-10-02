@@ -470,7 +470,7 @@ async fn snapshot_groups_local_and_registered_sources_for_the_same_provider_acco
 }
 
 #[test]
-fn failed_unregistered_probes_report_provider_issues_without_inventing_accounts() {
+fn failed_native_probes_do_not_invent_accounts_but_discovered_proxy_sources_stay_visible() {
     use quotio::{
         contract::{AccountList, snapshot::project},
         domain::{AccountOrigin, AccountRef, ProviderFailure, ProviderId},
@@ -488,6 +488,7 @@ fn failed_unregistered_probes_report_provider_issues_without_inventing_accounts(
             origin: Some(AccountOrigin::BorrowedProxy),
         }),
     ] {
+        let borrowed_proxy = reference.is_some();
         let report = UsageReport {
             schema_version: 1,
             generated_at: datetime!(2026-01-01 0:00 UTC),
@@ -506,9 +507,25 @@ fn failed_unregistered_probes_report_provider_issues_without_inventing_accounts(
             time::Duration::minutes(5),
         )
         .unwrap();
-        assert!(snapshot.accounts.is_empty());
-        assert!(snapshot.usage.is_empty());
-        assert_eq!(snapshot.provider_issues["mock"].code, "authentication");
+        if borrowed_proxy {
+            assert_eq!(snapshot.accounts.len(), 1);
+            assert_eq!(snapshot.accounts[0].display_name, "Work");
+            assert!(snapshot.accounts[0].actions.is_empty());
+            assert!(snapshot.accounts[0].sources[0].actions.is_empty());
+            assert_eq!(
+                snapshot.usage[0].freshness,
+                quotio::contract::Freshness::Unavailable
+            );
+            assert!(snapshot.usage[0].metrics.is_empty());
+            assert_eq!(
+                snapshot.usage[0].issue.as_ref().unwrap().code,
+                "authentication"
+            );
+        } else {
+            assert!(snapshot.accounts.is_empty());
+            assert!(snapshot.usage.is_empty());
+            assert_eq!(snapshot.provider_issues["mock"].code, "authentication");
+        }
         let value = serde_json::to_value(&snapshot).unwrap();
         validator("V2Snapshot").validate(&value).unwrap();
         assert!(!value.to_string().contains("internal detail"));

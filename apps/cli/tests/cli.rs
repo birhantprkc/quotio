@@ -350,7 +350,7 @@ fn account_commands_are_explicit_and_help_exposes_no_secret_argument() {
 }
 
 #[test]
-fn account_selector_requires_one_provider_and_conflicts_with_skip_vault() {
+fn account_selector_requires_one_provider_and_allows_read_only_sources_without_vault() {
     assert!(
         Cli::try_parse_from([
             "quotio",
@@ -371,9 +371,11 @@ fn account_selector_requires_one_provider_and_conflicts_with_skip_vault() {
             "codex",
             "--account",
             "id",
-            "--no-saved-accounts"
+            "--no-saved-accounts",
+            "--cli-proxy-auth-dir",
+            "/absolute/proxy-auth"
         ])
-        .is_err()
+        .is_ok()
     );
     let config = ConfigFile::new("enabled_providers = []");
     let output = Command::new(env!("CARGO_BIN_EXE_quotio"))

@@ -40,6 +40,7 @@ public final class QuotioCLIServerProcess {
     private let configurationURL: URL?
     private let accountDataDirectory: URL?
     private let proxyAuthDirectory: URL?
+    private let proxyConfigurationURL: URL?
     private let initialPreferences: @MainActor () -> (ProviderTrackingPreferences, RefreshPreferences, Set<String>)?
     private let applicationSupportDirectoryName: String
     private let accountVaultNamespace: String
@@ -57,6 +58,7 @@ public final class QuotioCLIServerProcess {
         configurationURL: URL? = nil,
         accountDataDirectory: URL? = nil,
         proxyAuthDirectory: URL? = nil,
+        proxyConfigurationURL: URL? = nil,
         initialPreferences: @escaping @MainActor () -> (ProviderTrackingPreferences, RefreshPreferences, Set<String>)? = { nil },
         applicationSupportDirectoryName: String = "app.bytrong.quotio",
         accountVaultNamespace: String = "quotio-macos",
@@ -68,6 +70,7 @@ public final class QuotioCLIServerProcess {
         self.configurationURL = configurationURL
         self.accountDataDirectory = accountDataDirectory
         self.proxyAuthDirectory = proxyAuthDirectory
+        self.proxyConfigurationURL = proxyConfigurationURL
         self.initialPreferences = initialPreferences
         self.applicationSupportDirectoryName = applicationSupportDirectoryName
         self.accountVaultNamespace = accountVaultNamespace
@@ -99,6 +102,9 @@ public final class QuotioCLIServerProcess {
         ]
         if let proxyAuthDirectory {
             process.arguments?.append(contentsOf: ["--cli-proxy-auth-dir", proxyAuthDirectory.path])
+        }
+        if let proxyConfigurationURL {
+            process.arguments?.append(contentsOf: ["--cli-proxy-config", proxyConfigurationURL.path])
         }
         var environment = ProcessInfo.processInfo.environment
         environment.removeValue(forKey: "QUOTIO_SERVER_TOKEN")

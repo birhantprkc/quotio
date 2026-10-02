@@ -22,10 +22,10 @@ all providers. Windows/Linux runtime checks are deferred.
 | codex | oauth, native | codex_native (borrowed_native), cli_proxy_auth_file (borrowed_proxy) | macos, linux |
 | amp | api_key, native | amp_native (borrowed_native) | macos, linux |
 | antigravity | native, owned_token | antigravity_native (borrowed_native), cli_proxy_auth_file (borrowed_proxy) | macos, linux |
-| synthetic | api_key | — | macos, linux |
-| openrouter | api_key | — | macos, linux |
-| zai | api_key | quotio_custom_provider (borrowed_proxy) | macos, linux |
-| minimax | api_key | — | macos, linux |
+| synthetic | api_key | cli_proxy_auth_file (borrowed_proxy) | macos, linux |
+| openrouter | api_key | cli_proxy_auth_file (borrowed_proxy) | macos, linux |
+| zai | api_key | quotio_custom_provider (borrowed_proxy), cli_proxy_auth_file (borrowed_proxy) | macos, linux |
+| minimax | api_key | cli_proxy_auth_file (borrowed_proxy) | macos, linux |
 | factory | api_key, owned_token, native | factory_native (borrowed_native) | macos, linux |
 | aiand | api_key | — | macos, linux |
 | alibabacodingplan | api_key | — | macos, linux |
@@ -40,13 +40,13 @@ all providers. Windows/Linux runtime checks are deferred.
 | cursor | native | cursor_native (borrowed_native) | macos, linux |
 | deepgram | api_key | — | macos, linux |
 | deepinfra | api_key | — | macos, linux |
-| deepseek | api_key | — | macos, linux |
+| deepseek | api_key | cli_proxy_auth_file (borrowed_proxy) | macos, linux |
 | devin | api_key | — | macos, linux |
 | devin-desktop | api_key | devin_desktop_native (borrowed_native) | macos, linux |
 | doubao | api_key | — | macos, linux |
 | elevenlabs | api_key | — | macos, linux |
 | fireworks | api_key | — | macos, linux |
-| gemini | native | — | — |
+| gemini | native | cli_proxy_auth_file (borrowed_proxy) | — |
 | grok | native, owned_token | grok_native (borrowed_native) | macos, linux |
 | groq | api_key | — | macos, linux |
 | ibmbob | api_key | — | macos, linux |
@@ -55,13 +55,13 @@ all providers. Windows/Linux runtime checks are deferred.
 | kiro | native, owned_token | kiro_native (borrowed_native), cli_proxy_auth_file (borrowed_proxy) | macos, linux |
 | litellm | api_key | — | macos, linux |
 | llmproxy | api_key | — | macos, linux |
-| moonshot | api_key | — | macos, linux |
+| moonshot | api_key | cli_proxy_auth_file (borrowed_proxy) | macos, linux |
 | neuralwatt | api_key | — | macos, linux |
 | openai | api_key | — | macos, linux |
 | opencodego | api_key | — | macos, linux |
-| poe | api_key | — | macos, linux |
+| poe | api_key | cli_proxy_auth_file (borrowed_proxy) | macos, linux |
 | sub2api | api_key | — | macos, linux |
-| venice | api_key | — | macos, linux |
+| venice | api_key | cli_proxy_auth_file (borrowed_proxy) | macos, linux |
 | vertexai | native | cli_proxy_auth_file (borrowed_proxy) | — |
 | warp | api_key | — | macos, linux |
 | xai | api_key | — | macos, linux |

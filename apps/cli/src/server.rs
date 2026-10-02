@@ -123,6 +123,7 @@ struct ApiState {
     context: ProviderContext,
     no_saved_accounts: bool,
     proxy_auth_directory: Option<std::path::PathBuf>,
+    proxy_configuration: Option<std::path::PathBuf>,
     manage: bool,
     vault: Option<crate::accounts::vault::Vault>,
     oauth: Option<crate::accounts::oauth::OAuthSessionManager>,
@@ -776,23 +777,30 @@ async fn collect_usage(
         state.status.lock().await.refreshing = true;
     }
     let timeout = Duration::from_secs(config.provider_timeout);
-    let borrowed = state
-        .proxy_auth_directory
-        .as_deref()
-        .map(|directory| {
-            crate::accounts::proxy::adapters(
-                directory,
-                &selected,
-                account.as_deref(),
-                &disabled_proxy_auth_files,
-            )
+    let borrowed: Vec<_> = [
+        crate::accounts::proxy::sources(
+            state.proxy_auth_directory.as_deref(),
+            None,
+            &selected,
+            account.as_deref(),
+            &disabled_proxy_auth_files,
+        ),
+        crate::accounts::proxy::sources(
+            None,
+            state.proxy_configuration.as_deref(),
+            &selected,
+            account.as_deref(),
+            &[],
+        ),
+    ]
+    .into_iter()
+    .flat_map(|sources| {
+        sources.unwrap_or_else(|_| {
+            tracing::warn!("A CLIProxyAPI credential source is unavailable, invalid, or unsafe");
+            Vec::new()
         })
-        .transpose()
-        .unwrap_or_else(|_| {
-            tracing::warn!("CLIProxyAPI auth directory is unavailable or unsafe");
-            None
-        })
-        .unwrap_or_default();
+    })
+    .collect();
     let disabled_proxy_account = account.as_deref().is_some_and(|id| {
         state.proxy_auth_directory.is_some()
             && selected.iter().any(|provider| {
@@ -1116,6 +1124,7 @@ pub async fn run(args: ServeArgs) -> Result<(), ServerError> {
         context,
         no_saved_accounts: args.no_saved_accounts,
         proxy_auth_directory: args.cli_proxy_auth_dir,
+        proxy_configuration: args.cli_proxy_config,
         manage: args.manage,
         vault,
         oauth,

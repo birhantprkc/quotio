@@ -73,6 +73,7 @@ pub(super) async fn fixture() -> (Arc<ApiState>, std::path::PathBuf, String) {
             context,
             no_saved_accounts: true,
             proxy_auth_directory: None,
+            proxy_configuration: None,
             manage: true,
             vault: Some(vault),
             oauth: Some(manager),
@@ -293,6 +294,105 @@ async fn account_scoped_refresh_accepts_borrowed_proxy_account() {
     }
     drop(refresh_guard);
     std::fs::remove_dir_all(dir).unwrap();
+}
+
+#[tokio::test]
+async fn borrowed_proxy_refresh_keeps_valid_sources_when_the_other_source_fails() {
+    for valid_config in [true, false] {
+        let (mut state, dir, _) = fixture().await;
+        let dir = dir.canonicalize().unwrap();
+        let auth = dir.join("proxy-auth");
+        std::fs::create_dir(&auth).unwrap();
+        let auth_bytes = br#"{"type":"claude","disabled":true,"access_token":"owner-only"}"#;
+        std::fs::write(auth.join("claude.json"), auth_bytes).unwrap();
+        let config = dir.join("proxy.yaml");
+        let config_bytes = if valid_config {
+            b"openai-compatibility:\n  - base-url: https://openrouter.ai/api/v1\n    disabled: true\n    api-key-entries: [{api-key: owner-only}]\n".as_slice()
+        } else {
+            b"openai-compatibility: [".as_slice()
+        };
+        std::fs::write(&config, config_bytes).unwrap();
+        let inner = Arc::get_mut(&mut state).unwrap();
+        inner.proxy_auth_directory = Some(if valid_config {
+            config.clone()
+        } else {
+            auth.clone()
+        });
+        inner.proxy_configuration = Some(config.clone());
+        let provider = if valid_config {
+            Provider::OpenRouter
+        } else {
+            Provider::Catalog("claude")
+        };
+        state.settings.write().await.values.enabled_providers = vec![provider.id().into()];
+        refresh(&state, None).await.unwrap();
+        let Json(snapshot) = resolved_snapshot(State(state.clone()), security::owner())
+            .await
+            .unwrap_or_else(|_| panic!());
+        let account = snapshot
+            .accounts
+            .iter()
+            .find(|account| {
+                account.provider_id == provider.id()
+                    && account
+                        .sources
+                        .iter()
+                        .any(|source| source.origin == crate::domain::AccountOrigin::BorrowedProxy)
+            })
+            .unwrap();
+        assert_eq!(account.state, crate::contract::ConnectionState::Disabled);
+        let usage = snapshot
+            .usage
+            .iter()
+            .find(|usage| usage.account_id == account.id)
+            .unwrap();
+        assert!(usage.metrics.is_empty());
+        assert!(usage.issue.is_none());
+        assert!(
+            state
+                .snapshot
+                .read()
+                .await
+                .as_ref()
+                .unwrap()
+                .1
+                .failures
+                .iter()
+                .any(|failure| {
+                    failure.provider.0 == provider.id()
+                        && failure.code == ProviderError::SourceDisabled
+                        && failure.account_ref.as_ref().is_some_and(|reference| {
+                            reference.origin == Some(crate::domain::AccountOrigin::BorrowedProxy)
+                        })
+                })
+        );
+        let (_, Json(operation)) = manual_refresh(
+            State(state.clone()),
+            security::owner(),
+            ApiJson(RefreshRequest {
+                providers: vec![provider],
+                account_id: Some(account.id.clone()),
+                force: true,
+                include_owned: true,
+                disabled_proxy_auth_files: vec![],
+            }),
+        )
+        .await
+        .unwrap_or_else(|_| panic!());
+        assert_eq!(done(&state, &operation.id).await.status, "completed");
+        let Json(scoped) = resolved_snapshot(State(state.clone()), security::owner())
+            .await
+            .unwrap_or_else(|_| panic!());
+        assert!(
+            scoped
+                .accounts
+                .iter()
+                .any(|candidate| candidate.id == account.id)
+        );
+        assert_eq!(std::fs::read(auth.join("claude.json")).unwrap(), auth_bytes);
+        assert_eq!(std::fs::read(config).unwrap(), config_bytes);
+        std::fs::remove_dir_all(dir).unwrap();
+    }
 }
 
 #[tokio::test]

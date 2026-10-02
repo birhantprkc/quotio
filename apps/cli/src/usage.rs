@@ -13,6 +13,8 @@ pub struct Request {
     pub providers: Vec<Provider>,
     pub timeout: u64,
     pub config: Option<PathBuf>,
+    pub cli_proxy_auth_dir: Option<PathBuf>,
+    pub cli_proxy_config: Option<PathBuf>,
     pub no_saved_accounts: bool,
     pub account: Option<String>,
 }
@@ -48,9 +50,42 @@ pub async fn collect(request: Request) -> Result<Collected, Error> {
             selected.push(provider);
         }
     }
+    if request.account.is_some() && selected.len() != 1 {
+        return Err(Error {
+            message: "--account requires exactly one --provider.".into(),
+            exit_code: 2,
+        });
+    }
+    use clap::ValueEnum;
+    let proxy_providers = if automatic {
+        Provider::value_variants()
+            .iter()
+            .copied()
+            .filter(|provider| *provider != Provider::Mock && !disabled.contains(provider))
+            .collect::<Vec<_>>()
+    } else {
+        selected.clone()
+    };
+    let borrowed = crate::accounts::proxy::sources(
+        request.cli_proxy_auth_dir.as_deref(),
+        request.cli_proxy_config.as_deref(),
+        &proxy_providers,
+        request.account.as_deref(),
+        &config.disabled_proxy_auth_files,
+    )
+    .map_err(|error| Error {
+        message: error.to_string(),
+        exit_code: 2,
+    })?;
     let providers = tokio::select! {
         providers = async {
-            if let Some(id) = request.account.as_deref().filter(|id| *id != "local") {
+            if request.account.is_some() && !borrowed.is_empty() {
+                return Ok(borrowed);
+            }
+            let mut providers = if let Some(id) = request.account.as_deref().filter(|id| *id != "local") {
+                if request.no_saved_accounts {
+                    return Err(crate::accounts::AccountError::NotFound);
+                }
                 let provider = selected
                     .first()
                     .copied()
@@ -69,7 +104,11 @@ pub async fn collect(request: Request) -> Result<Collected, Error> {
                     Duration::from_secs(request.timeout),
                     request.account.as_deref(),
                 ).await
+            }?;
+            if request.account.is_none() {
+                providers.extend(borrowed);
             }
+            Ok(providers)
         } => providers.map_err(|error| Error { message: error.to_string(), exit_code: 2 })?,
         _ = tokio::signal::ctrl_c() => return Err(Error { message: "Account discovery cancelled.".into(), exit_code: 3 }),
     };
@@ -99,13 +138,25 @@ pub async fn collect(request: Request) -> Result<Collected, Error> {
         providers.iter().map(|provider| provider.id().0).collect();
     let source_scope: std::collections::HashSet<String> = providers
         .iter()
-        .filter_map(|provider| provider.account_ref().map(|reference| reference.id))
+        .flat_map(|provider| {
+            provider
+                .account_ref()
+                .map(|reference| {
+                    [
+                        crate::contract::snapshot::external_id(&provider.id().0, Some(&reference)),
+                        reference.id,
+                    ]
+                })
+                .into_iter()
+                .flatten()
+        })
         .collect();
     let saved = !request.no_saved_accounts
         && providers.iter().any(|provider| {
-            provider
-                .account_ref()
-                .is_some_and(|reference| reference.id != "local")
+            provider.account_ref().is_some_and(|reference| {
+                reference.id != "local"
+                    && reference.origin != Some(crate::domain::AccountOrigin::BorrowedProxy)
+            })
         });
     let cache = crate::cache::UsageCache::platform(Duration::from_secs(config.cache_ttl_seconds));
     let collection = cache.collect(

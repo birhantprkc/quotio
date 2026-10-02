@@ -1,4 +1,6 @@
-//! Read-only CLIProxyAPI auth files supplied by the native parent.
+//! Read-only CLIProxyAPI credentials; the source application owns token rotation.
+mod config;
+
 use super::{AccountError, Credential};
 use crate::{
     cli::Provider,
@@ -41,10 +43,14 @@ struct BorrowedProxyProvider {
     path: PathBuf,
     provider: Provider,
     reference: AccountRef,
+    config_key: bool,
 }
 
 impl BorrowedProxyProvider {
     fn snapshot(&self, now: OffsetDateTime) -> Result<Snapshot, ProviderError> {
+        if self.config_key {
+            return config::snapshot(&self.path, &self.reference.id, self.provider);
+        }
         let bytes = read_file(&self.path)?;
         let value: Value =
             serde_json::from_slice(&bytes).map_err(|_| ProviderError::InvalidData)?;
@@ -58,7 +64,7 @@ impl BorrowedProxyProvider {
                 self.provider.id(),
                 &String::from_utf8_lossy(&bytes),
             ]),
-            material: material(provider, &value, now, true)?,
+            material: material(provider, &value, now)?,
         })
     }
 }
@@ -148,10 +154,13 @@ pub fn adapters(
     disabled_files: &[String],
 ) -> Result<Vec<Arc<dyn ProviderAdapter>>, AccountError> {
     validate_directory(directory)?;
-    let Ok(entries) = std::fs::read_dir(directory) else {
-        return Ok(Vec::new());
+    let entries = match std::fs::read_dir(directory) {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(Vec::new()),
+        Err(_) => return Err(AccountError::Storage),
     };
     let mut paths = entries
+        .take(MAX_FILES + 1)
         .collect::<Result<Vec<_>, _>>()
         .map_err(|_| AccountError::Storage)?;
     if paths.len() > MAX_FILES {
@@ -161,15 +170,53 @@ pub fn adapters(
     Ok(paths
         .into_iter()
         .filter(|entry| {
+            entry
+                .path()
+                .extension()
+                .is_some_and(|value| value == "json")
+        })
+        .filter(|entry| {
             !disabled_files
                 .iter()
                 .any(|name| entry.file_name() == name.as_str())
         })
-        .filter_map(|entry| inspect(entry.path()).ok().flatten())
+        .filter_map(|entry| match inspect(entry.path()) {
+            Ok(Some(source)) => Some(source),
+            _ => {
+                tracing::warn!("Skipped an unsupported or invalid CLIProxyAPI auth file");
+                None
+            }
+        })
         .filter(|source| providers.contains(&source.provider))
-        .filter(|source| account.is_none_or(|id| source.reference.id == id))
+        .filter(|source| {
+            account.is_none_or(|id| {
+                source.reference.id == id
+                    || id
+                        == crate::contract::snapshot::external_id(
+                            source.provider.id(),
+                            Some(&source.reference),
+                        )
+            })
+        })
         .map(|source| Arc::new(source) as Arc<dyn ProviderAdapter>)
         .collect())
+}
+
+pub fn sources(
+    directory: Option<&Path>,
+    configuration: Option<&Path>,
+    providers: &[Provider],
+    account: Option<&str>,
+    disabled_files: &[String],
+) -> Result<Vec<Arc<dyn ProviderAdapter>>, AccountError> {
+    let mut sources = directory
+        .map(|path| adapters(path, providers, account, disabled_files))
+        .transpose()?
+        .unwrap_or_default();
+    if let Some(path) = configuration {
+        sources.extend(config::adapters(path, providers, account)?);
+    }
+    Ok(sources)
 }
 
 fn inspect(path: PathBuf) -> Result<Option<BorrowedProxyProvider>, AccountError> {
@@ -181,8 +228,6 @@ fn inspect(path: PathBuf) -> Result<Option<BorrowedProxyProvider>, AccountError>
     let Some(provider) = provider(&value) else {
         return Ok(None);
     };
-    material(provider, &value, OffsetDateTime::now_utc(), false)
-        .map_err(|_| AccountError::Input)?;
     let filename = path
         .file_name()
         .and_then(|value| value.to_str())
@@ -203,6 +248,7 @@ fn inspect(path: PathBuf) -> Result<Option<BorrowedProxyProvider>, AccountError>
     Ok(Some(BorrowedProxyProvider {
         path,
         provider,
+        config_key: false,
         reference: AccountRef {
             origin: Some(AccountOrigin::BorrowedProxy),
             id,
@@ -212,6 +258,15 @@ fn inspect(path: PathBuf) -> Result<Option<BorrowedProxyProvider>, AccountError>
 }
 
 fn read_file(path: &Path) -> Result<Vec<u8>, ProviderError> {
+    validate_directory(path.parent().ok_or(ProviderError::CredentialStorage)?)
+        .map_err(|_| ProviderError::CredentialStorage)?;
+    if std::fs::symlink_metadata(path)
+        .map_err(|_| ProviderError::CredentialStorage)?
+        .file_type()
+        .is_symlink()
+    {
+        return Err(ProviderError::CredentialStorage);
+    }
     let mut options = OpenOptions::new();
     options.read(true);
     #[cfg(unix)]
@@ -242,6 +297,7 @@ fn provider(value: &Value) -> Option<Provider> {
     match value.get("type")?.as_str()? {
         "codex" => Some(Provider::Codex),
         "claude" => Some(Provider::Catalog("claude")),
+        "gemini" | "gemini-cli" => Some(Provider::Catalog("gemini")),
         "github-copilot" | "copilot" => Some(Provider::Catalog("copilot")),
         "antigravity" => Some(Provider::Antigravity),
         "kiro" => Some(Provider::Catalog("kiro")),
@@ -254,15 +310,27 @@ fn material(
     provider: Provider,
     value: &Value,
     now: OffsetDateTime,
-    enforce_expiry: bool,
 ) -> Result<Material, ProviderError> {
+    if disabled(value)? {
+        return Err(ProviderError::SourceDisabled);
+    }
+    if value.get("service_account").is_some() {
+        return Err(ProviderError::Unavailable);
+    }
+    let token_value = if provider == Provider::Catalog("gemini") {
+        value
+            .get("token")
+            .filter(|token| token.is_object())
+            .unwrap_or(value)
+    } else {
+        value
+    };
     let token = text(
-        value,
+        token_value,
         &["access_token", "accessToken", "session_key", "oauth_token"],
     )
     .ok_or(ProviderError::Authentication)?;
-    if enforce_expiry
-        && let Some(expiry) = expiry(value)?
+    if let Some(expiry) = expiry(value)?.or(expiry(token_value)?)
         && expiry <= now + Duration::minutes(5)
     {
         return Err(ProviderError::OwnerRefreshRequired);
@@ -295,6 +363,7 @@ fn material(
     let mut keys = HashMap::new();
     let key = match provider {
         Provider::Catalog("claude") => "CLAUDE_OAUTH_ACCESS_TOKEN",
+        Provider::Catalog("gemini") => "GEMINI_OAUTH_ACCESS_TOKEN",
         Provider::Catalog("copilot") => "COPILOT_API_TOKEN",
         Provider::Catalog("kiro") => "KIRO_ACCESS_TOKEN",
         Provider::Catalog("vertexai") => "VERTEXAI_ACCESS_TOKEN",
@@ -309,10 +378,18 @@ fn material(
         if let Some(value) = text(value, &["profile_arn", "profileArn"]) {
             keys.insert("KIRO_PROFILE_ARN".into(), value.into());
         }
-    } else if provider == Provider::Catalog("vertexai")
+    } else if matches!(provider, Provider::Catalog("vertexai" | "gemini"))
         && let Some(value) = text(value, &["project_id", "projectId", "project"])
     {
-        keys.insert("VERTEXAI_PROJECT_ID".into(), value.into());
+        keys.insert(
+            if provider == Provider::Catalog("gemini") {
+                "GEMINI_PROJECT"
+            } else {
+                "VERTEXAI_PROJECT_ID"
+            }
+            .into(),
+            value.into(),
+        );
     }
     Ok(Material::Keys(keys))
 }
@@ -335,11 +412,24 @@ fn valid(value: &str, maximum: usize) -> bool {
     !value.is_empty() && value.len() <= maximum && !value.chars().any(char::is_control)
 }
 
+fn disabled(value: &Value) -> Result<bool, ProviderError> {
+    match value.get("disabled") {
+        None => Ok(false),
+        Some(Value::Bool(value)) => Ok(*value),
+        _ => Err(ProviderError::InvalidData),
+    }
+}
+
 fn expiry(value: &Value) -> Result<Option<OffsetDateTime>, ProviderError> {
-    let Some(value) = ["expired", "expiry", "expires_at", "expiresAt"]
-        .iter()
-        .find_map(|name| value.get(name))
-    else {
+    let Some(value) = [
+        "expired",
+        "expiry",
+        "expires_at",
+        "expiresAt",
+        "expiry_date",
+    ]
+    .iter()
+    .find_map(|name| value.get(name)) else {
         return Ok(None);
     };
     if let Some(value) = value.as_str() {
@@ -370,7 +460,7 @@ fn jwt_claims(token: &str) -> Option<Value> {
 mod tests {
     use super::*;
 
-    fn directory() -> PathBuf {
+    pub(super) fn directory() -> PathBuf {
         let path = std::env::temp_dir().join(crate::accounts::random_string().unwrap());
         std::fs::create_dir(&path).unwrap();
         path.canonicalize().unwrap()
@@ -539,5 +629,43 @@ mod tests {
             std::fs::remove_file(link).unwrap();
             std::fs::remove_dir_all(directory).unwrap();
         }
+    }
+
+    #[test]
+    fn owner_disabled_auth_is_discovered_but_never_usable() {
+        let directory = directory();
+        let path = directory.join("claude.json");
+        let bytes = br#"{"type":"claude","disabled":true,"access_token":"owner-token"}"#;
+        std::fs::write(&path, bytes).unwrap();
+        let source = inspect(path.clone()).unwrap().unwrap();
+        assert_eq!(
+            source.snapshot(OffsetDateTime::now_utc()).err(),
+            Some(ProviderError::SourceDisabled)
+        );
+        assert_eq!(std::fs::read(path).unwrap(), bytes);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn gemini_nested_tokens_obey_expiry_and_never_borrow_refresh_tokens() {
+        let now = OffsetDateTime::now_utc();
+        let value = serde_json::json!({"type":"gemini", "project_id":"my-project",
+            "token":{"access_token":"gemini-fixture", "refresh_token":"owner-only", "expiry_date":(now + Duration::minutes(6)).unix_timestamp() * 1000}});
+        let Material::Keys(keys) = material(Provider::Catalog("gemini"), &value, now).unwrap()
+        else {
+            panic!()
+        };
+        assert_eq!(keys["GEMINI_OAUTH_ACCESS_TOKEN"], "gemini-fixture");
+        assert_eq!(keys["GEMINI_PROJECT"], "my-project");
+        assert_eq!(keys.len(), 2);
+        assert_eq!(
+            material(
+                Provider::Catalog("gemini"),
+                &value,
+                now + Duration::minutes(1)
+            )
+            .err(),
+            Some(ProviderError::OwnerRefreshRequired)
+        );
     }
 }

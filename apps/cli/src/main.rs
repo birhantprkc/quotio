@@ -300,6 +300,8 @@ async fn run() -> ExitCode {
                 providers: args.provider,
                 timeout: args.timeout,
                 config: args.config,
+                cli_proxy_auth_dir: args.cli_proxy_auth_dir,
+                cli_proxy_config: args.cli_proxy_config,
                 no_saved_accounts: args.no_saved_accounts,
                 account: args.account,
             })
