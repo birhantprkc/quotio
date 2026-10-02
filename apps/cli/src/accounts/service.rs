@@ -156,6 +156,13 @@ async fn validate_with_endpoint(
     credential: &Credential,
     endpoint_override: Option<&str>,
 ) -> Result<ProviderUsage, AccountError> {
+    if let Credential::AntigravityNative { source } = credential
+        && source.location == super::sources::AntigravityLocation::GeminiKeychain
+        && provider == Provider::Antigravity
+    {
+        source.identity()?;
+        return validate_credential(context, provider, credential, endpoint_override).await;
+    }
     let reference = credential;
     let resolved = reference.resolve_reference(provider).await?;
     let credentials = resolved
@@ -298,6 +305,14 @@ async fn validate_credential(
             .await?
         }
         Provider::Factory => FactoryProvider.fetch(&ctx).await?,
+        Provider::Antigravity
+            if matches!(credential, Credential::AntigravityNative { source }
+            if source.location == super::sources::AntigravityLocation::GeminiKeychain) =>
+        {
+            crate::providers::antigravity::AntigravityProvider
+                .fetch_native_reference(&ctx)
+                .await?
+        }
         Provider::Antigravity => {
             crate::providers::antigravity::AntigravityProvider
                 .fetch(&ctx)

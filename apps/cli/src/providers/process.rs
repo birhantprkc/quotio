@@ -106,6 +106,16 @@ pub(crate) async fn line<R: tokio::io::AsyncBufRead + Unpin>(
     Ok(buffer)
 }
 pub(crate) async fn output(program: &Path, args: &[&str]) -> Result<Vec<u8>, ProviderError> {
+    let (status, bytes) = output_status(program, args).await?;
+    if !status.success() {
+        return Err(ProviderError::Unavailable);
+    }
+    Ok(bytes)
+}
+pub(crate) async fn output_status(
+    program: &Path,
+    args: &[&str],
+) -> Result<(std::process::ExitStatus, Vec<u8>), ProviderError> {
     let mut child = spawn(program, args)?;
     drop(child.stdin.take());
     let stdout = child.stdout.take().ok_or(ProviderError::Internal)?;
@@ -118,20 +128,25 @@ pub(crate) async fn output(program: &Path, args: &[&str]) -> Result<Vec<u8>, Pro
     if bytes.len() > MAX_BYTES {
         return Err(ProviderError::InvalidData);
     }
-    if !child
-        .wait()
-        .await
-        .map_err(|_| ProviderError::Unavailable)?
-        .success()
-    {
-        return Err(ProviderError::Unavailable);
-    }
-    Ok(bytes)
+    let status = child.wait().await.map_err(|_| ProviderError::Unavailable)?;
+    Ok((status, bytes))
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn output_status_preserves_exit_codes_without_changing_output_errors() {
+        let args = ["-c", "printf fixture; exit 44"];
+        let (status, bytes) = output_status(Path::new("/bin/sh"), &args).await.unwrap();
+        assert_eq!(status.code(), Some(44));
+        assert_eq!(bytes, b"fixture");
+        assert_eq!(
+            output(Path::new("/bin/sh"), &args).await.unwrap_err(),
+            ProviderError::Unavailable
+        );
+    }
     #[cfg(unix)]
     #[test]
     fn executable_lookup_preserves_order_and_rejects_nonexecutables() {

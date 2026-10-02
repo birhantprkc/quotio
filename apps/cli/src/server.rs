@@ -1012,7 +1012,10 @@ pub async fn run(args: ServeArgs) -> Result<(), ServerError> {
     if !args.listen.ip().is_loopback() {
         return Err(ServerError::Listen);
     }
-    if let Some(directory) = args.cli_proxy_auth_dir.as_deref() {
+    let proxy_auth_directory = args
+        .cli_proxy_auth_dir
+        .or_else(crate::accounts::proxy::default_auth_directory);
+    if let Some(directory) = proxy_auth_directory.as_deref() {
         crate::accounts::proxy::validate_directory(directory).map_err(|_| ServerError::Config)?;
     }
     let path = args
@@ -1123,7 +1126,7 @@ pub async fn run(args: ServeArgs) -> Result<(), ServerError> {
         status: Mutex::new(RefreshStatus::default()),
         context,
         no_saved_accounts: args.no_saved_accounts,
-        proxy_auth_directory: args.cli_proxy_auth_dir,
+        proxy_auth_directory,
         proxy_configuration: args.cli_proxy_config,
         manage: args.manage,
         vault,

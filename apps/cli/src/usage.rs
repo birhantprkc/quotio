@@ -66,8 +66,11 @@ pub async fn collect(request: Request) -> Result<Collected, Error> {
     } else {
         selected.clone()
     };
+    let proxy_auth_directory = request
+        .cli_proxy_auth_dir
+        .or_else(crate::accounts::proxy::default_auth_directory);
     let borrowed = crate::accounts::proxy::sources(
-        request.cli_proxy_auth_dir.as_deref(),
+        proxy_auth_directory.as_deref(),
         request.cli_proxy_config.as_deref(),
         &proxy_providers,
         request.account.as_deref(),

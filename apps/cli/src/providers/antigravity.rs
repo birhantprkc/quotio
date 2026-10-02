@@ -46,6 +46,54 @@ fn read_auth(path: &Path) -> Result<Secret, ProviderError> {
     Ok(Secret(auth.access_token))
 }
 impl AntigravityProvider {
+    pub(crate) async fn fetch_native_reference(
+        &self,
+        context: &ProviderContext,
+    ) -> Result<ProviderUsage, ProviderError> {
+        self.fetch_direct(context, &mut None, None).await
+    }
+    pub(crate) async fn fetch_from_store(
+        &self,
+        context: &ProviderContext,
+        store: std::sync::Arc<dyn super::antigravity_auth::Store>,
+    ) -> Result<ProviderUsage, ProviderError> {
+        self.fetch_direct(context, &mut None, Some(store)).await
+    }
+    async fn fetch_direct(
+        &self,
+        context: &ProviderContext,
+        expected: &mut Option<Identity>,
+        store: Option<std::sync::Arc<dyn super::antigravity_auth::Store>>,
+    ) -> Result<ProviderUsage, ProviderError> {
+        let mut last = ProviderError::QuotaUnavailable;
+        for base in [
+            "https://daily-cloudcode-pa.googleapis.com/v1internal:",
+            BASE,
+        ] {
+            match self
+                .fetch_api_for_account(
+                    context,
+                    base,
+                    "https://www.googleapis.com/oauth2/v2/userinfo",
+                    expected,
+                    store.clone(),
+                )
+                .await
+            {
+                Ok(usage) => return Ok(usage),
+                Err(error) => {
+                    last = error;
+                    if !matches!(
+                        error,
+                        ProviderError::QuotaUnavailable | ProviderError::Unavailable
+                    ) {
+                        break;
+                    }
+                }
+            }
+        }
+        Err(last)
+    }
     fn token(&self, context: &ProviderContext) -> Result<Secret, ProviderError> {
         if let Some(token) = context.credentials.get("ANTIGRAVITY_ACCESS_TOKEN") {
             return if token.0.trim().is_empty() {
@@ -254,7 +302,7 @@ impl AntigravityProvider {
         base: &str,
         user_info: &str,
     ) -> Result<ProviderUsage, ProviderError> {
-        self.fetch_api_for_account(context, base, user_info, &mut None)
+        self.fetch_api_for_account(context, base, user_info, &mut None, None)
             .await
     }
     async fn fetch_api_for_account(
@@ -263,25 +311,32 @@ impl AntigravityProvider {
         base: &str,
         user_info: &str,
         expected: &mut Option<Identity>,
+        store: Option<std::sync::Arc<dyn super::antigravity_auth::Store>>,
     ) -> Result<ProviderUsage, ProviderError> {
         let explicit = context
             .credentials
             .get("ANTIGRAVITY_ACCESS_TOKEN")
             .is_some()
             || context.credentials.get("ANTIGRAVITY_AUTH_FILE").is_some();
-        if explicit {
+        if explicit && store.is_none() {
             return self
                 .fetch_with_token(context, base, user_info, &self.token(context)?, expected)
                 .await;
         }
-        let session = super::antigravity_auth::Session::load(
-            std::sync::Arc::new(super::antigravity_auth::NativeStore),
+        let mut session = super::antigravity_auth::Session::load(
+            store.unwrap_or_else(|| std::sync::Arc::new(super::antigravity_auth::NativeStore)),
             context,
         )
         .await?;
-        let result = self
+        let mut result = self
             .fetch_with_token(context, base, user_info, &session.token, expected)
             .await;
+        if matches!(result, Err(ProviderError::Authentication)) {
+            session.refresh(context).await?;
+            result = self
+                .fetch_with_token(context, base, user_info, &session.token, expected)
+                .await;
+        }
         if result.is_ok() {
             session.verify().await?;
         }
@@ -361,9 +416,20 @@ impl AntigravityProvider {
         };
         let (antigravity_subscription, invalid_metadata) =
             subscription_metadata::parse(&subscription);
+        let owner_project = context.credentials.get("ANTIGRAVITY_PROJECT");
         let project = antigravity_subscription
             .as_ref()
-            .and_then(|info| info.cloudaicompanion_project.as_deref());
+            .and_then(|info| info.cloudaicompanion_project.as_deref())
+            .or_else(|| {
+                owner_project
+                    .as_ref()
+                    .map(|project| project.0.as_str())
+                    .filter(|project| {
+                        project.len() <= 1024 && !project.chars().any(char::is_control)
+                    })
+                    .map(str::trim)
+                    .filter(|project| !project.is_empty())
+            });
         let payload = project
             .map(|p| json!({"project":p}))
             .unwrap_or_else(|| json!({}));
@@ -460,7 +526,12 @@ impl ProviderAdapter for AntigravityProvider {
                 || context.credentials.get("ANTIGRAVITY_AUTH_FILE").is_some()
             {
                 let token = self.token(context).ok()?;
-                Some(crate::cache::fingerprint(&["antigravity", &token.0]))
+                let project = context.credentials.get("ANTIGRAVITY_PROJECT");
+                Some(crate::cache::fingerprint(&[
+                    "antigravity",
+                    &token.0,
+                    project.as_ref().map_or("", |project| &project.0),
+                ]))
             } else {
                 super::antigravity_auth::usage_cache_identity().await
             }
@@ -483,32 +554,10 @@ impl ProviderAdapter for AntigravityProvider {
     fn fetch<'a>(&'a self, context: &'a ProviderContext) -> FetchFuture<'a> {
         Box::pin(async move {
             let mut expected = None;
-            let mut last = ProviderError::QuotaUnavailable;
-            for base in [
-                "https://daily-cloudcode-pa.googleapis.com/v1internal:",
-                BASE,
-            ] {
-                match self
-                    .fetch_api_for_account(
-                        context,
-                        base,
-                        "https://www.googleapis.com/oauth2/v2/userinfo",
-                        &mut expected,
-                    )
-                    .await
-                {
-                    Ok(usage) => return Ok(usage),
-                    Err(error) => {
-                        last = error;
-                        if !matches!(
-                            error,
-                            ProviderError::QuotaUnavailable | ProviderError::Unavailable
-                        ) {
-                            break;
-                        }
-                    }
-                }
-            }
+            let last = match self.fetch_direct(context, &mut expected, None).await {
+                Ok(usage) => return Ok(usage),
+                Err(error) => error,
+            };
             if context
                 .credentials
                 .get("ANTIGRAVITY_ACCESS_TOKEN")
@@ -625,6 +674,72 @@ mod tests {
             assert_eq!(task.await.unwrap().len(), 3);
         }
     }
+    #[tokio::test]
+    async fn borrowed_antigravity_project_fills_missing_subscription_project() {
+        struct Borrowed(String);
+        impl super::super::CredentialStore for Borrowed {
+            fn get(&self, name: &str) -> Option<Secret> {
+                match name {
+                    "ANTIGRAVITY_ACCESS_TOKEN" => Some(Secret("borrowed-token".into())),
+                    "ANTIGRAVITY_PROJECT" => Some(Secret(self.0.clone())),
+                    _ => None,
+                }
+            }
+        }
+        for (project, owner_project, expected_project) in [
+            (None, " borrowed-project ".into(), Some("borrowed-project")),
+            (
+                Some("live-project"),
+                "borrowed-project".into(),
+                Some("live-project"),
+            ),
+            (None, " ".into(), None),
+            (None, "bad\nproject".into(), None),
+            (None, "x".repeat(1025), None),
+        ] {
+            let subscription = project
+                .map(|project| json!({"cloudaicompanionProject":project}))
+                .unwrap_or_else(|| json!({}));
+            let (base, task) = http::fixture::server(vec![
+                json!({"id":"demo-id","email":"demo@example.invalid"}),
+                subscription,
+                json!({"groups":[{"name":"Gemini","buckets":[{"name":"weekly","remainingFraction":0.75}]}]}),
+            ]).await;
+            let mut context = http::fixture::context();
+            let credentials = std::sync::Arc::new(Borrowed(owner_project));
+            context.credentials = credentials.clone();
+            let cache_identity = AntigravityProvider.cache_identity(&context).await;
+            context.credentials = std::sync::Arc::new(Borrowed("another-project".into()));
+            assert_ne!(
+                AntigravityProvider.cache_identity(&context).await,
+                cache_identity
+            );
+            context.credentials = credentials;
+            let usage = AntigravityProvider
+                .fetch_api(
+                    &context,
+                    &format!("{base}/v1internal:"),
+                    &format!("{base}/userinfo"),
+                )
+                .await
+                .unwrap();
+            assert_eq!(usage.windows[0].quota, Quota::from_used(Some(25.0)));
+            let requests = task.await.unwrap();
+            assert_eq!(requests.len(), 3);
+            let payload: Value =
+                serde_json::from_str(requests[2].split("\r\n\r\n").nth(1).unwrap()).unwrap();
+            assert_eq!(
+                payload.get("project").and_then(Value::as_str),
+                expected_project
+            );
+            assert!(
+                requests
+                    .iter()
+                    .all(|request| request.contains("Bearer borrowed-token"))
+            );
+        }
+    }
+
     #[tokio::test]
     async fn rich_subscription_metadata_reaches_usage_and_quota_request() {
         let subscription =

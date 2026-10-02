@@ -35,14 +35,15 @@ schema. Add `--manage` with `QUOTIO_SERVER_TOKEN` to enable managed account, Cod
 
 ## CLIProxyAPI credentials
 
-`usage` and `serve` accept `--cli-proxy-auth-dir` and `--cli-proxy-config` with
-absolute paths. CLIProxyAPI does not need to be running. The macOS Beta helper
-reads `~/.cli-proxy-api/` and `~/Library/Application Support/Quotio/config.yaml`.
-Standalone CLI commands opt in explicitly:
+`usage`, interactive mode, and `serve` read `~/.cli-proxy-api/` by default.
+CLIProxyAPI does not need to be running. Use `--cli-proxy-auth-dir` with an
+absolute path to read a different directory instead. Provider keys require
+`--cli-proxy-config` with an absolute YAML path; the macOS Beta helper supplies
+`~/Library/Application Support/Quotio/config.yaml` automatically.
 
 ```sh
-quotio usage --cli-proxy-auth-dir "$HOME/.cli-proxy-api" \
-  --cli-proxy-config "$HOME/Library/Application Support/Quotio/config.yaml" \
+quotio usage --provider antigravity
+quotio usage --cli-proxy-config "$HOME/Library/Application Support/Quotio/config.yaml" \
   --no-saved-accounts --format json
 ```
 
@@ -57,9 +58,11 @@ client access keys are never used as provider credentials. Generic OpenAI,
 Claude, Gemini, Vertex inference keys and arbitrary OpenAI-compatible endpoints
 do not provide a universal quota API; unsupported entries produce a warning.
 
-Credentials stay read-only: no import, token refresh, edit, or delete. Owner-disabled
-sources are not queried. Expired sources remain visible with an instruction to
-refresh in CLIProxyAPI. Each supported key/account has a separate borrowed source;
+Source files stay read-only: no import, edit, or delete. Antigravity refreshes
+expired access tokens when the file contains a refresh token, using a separate
+Quotio cache without changing the source file. Other expired sources require a
+refresh in CLIProxyAPI. Owner-disabled sources are not queried.
+Each supported key/account has a separate borrowed source;
 `--provider` filters providers and `--account` accepts a reported account ID.
 Quota comes from the existing provider APIs, never from proxy traffic counters.
 
@@ -492,30 +495,36 @@ credential directories, endpoint overrides or generation requests are used.
 Antigravity uses `ANTIGRAVITY_ACCESS_TOKEN` first, then the `access_token` field
 in the JSON file selected by `ANTIGRAVITY_AUTH_FILE`. On macOS, without either
 explicit source, it reads the existing Antigravity login from Keychain
-(service `gemini`, account `antigravity`) and calls Google's quota APIs directly.
+(service `gemini`, account `antigravity`) through `/usr/bin/security` and calls
+Google's quota APIs directly, matching OpenUsage's Keychain read path.
 The direct API route does not require a running app. If it cannot provide quota,
 Quotio can fall back to the running Antigravity app's local language server.
 This fallback does not run for explicitly supplied environment/file credentials,
 so it cannot silently select a different account. No browser cookies are used.
 
-If Keychain access is blocked, authorize it once from the signed CLI:
+The system Keychain helper may show a permission dialog if access is blocked.
+Quotio stops the helper after five seconds rather than waiting indefinitely.
+To check the same credential source explicitly:
 
 ```sh
 cargo run -- accounts authorize --provider antigravity
 cargo run -- usage --provider antigravity --format text
 ```
 
-The authorize command allows macOS to show its Keychain permission dialog. Choose
-Always Allow if you want subsequent usage checks to read the login without asking.
-Keep using the same signing identity. The `usage` command never opens that dialog;
-it reports an actionable error when the credential store cannot be read.
-
-Expired native access tokens are refreshed through Google OAuth using client
-configuration discovered from the installed Antigravity app. An unrecognized or
-ambiguous app layout stops refresh. Quotio stores only the derived access token
-in its own Keychain item, bound to the current login. It checks the original login
-before using cached tokens and before returning quota. Antigravity's credential
-values are never rewritten. Explicit environment/file tokens are not refreshed.
+Native access tokens are refreshed through Google OAuth when they expire or an
+authentication request rejects them. Refresh uses the public installed-app OAuth
+client configuration shipped by Antigravity. Quotio stores only the derived access
+token, its expiry and a hash of the source refresh token in
+`~/Library/Application Support/quotio/antigravity/auth.json` on macOS. The file is
+private to the current user and shared by CLI and macOS backend refreshes. The
+original Keychain login must remain readable and match the cache. Quotio also checks
+that login before returning quota. Antigravity's credentials and ACLs are never
+rewritten. CLIProxyAPI Antigravity accounts use the same refresh mechanism, with
+a separate cache for each source path under `antigravity/proxy/<path-hash>/auth.json`.
+The source file must remain readable, enabled, and unchanged during the request.
+Its refresh token must match the cached token's source hash. Quotio never stores
+the source refresh token or writes refreshed credentials back to CLIProxyAPI.
+Explicit `ANTIGRAVITY_ACCESS_TOKEN` and `ANTIGRAVITY_AUTH_FILE` inputs remain access-only.
 A missing quota remains unknown; missing windows are not invented. If the models
 endpoint reports every quota as full, Quotio requires confirmation from
 `retrieveUserQuota` before displaying those limits. If confirmation is denied,
@@ -725,7 +734,7 @@ symlinks or submodules. Build and runtime do not need the reference checkout.
   externally supplied master key on Linux. Factory selects the active saved
   account; the other managed providers support multiple saved accounts/keys.
 - Usage cache and REST polling are implemented; no TUI is included. Native Antigravity
-  also has an existing, separate access-token cache in Keychain. Usage cache files
+  has a separate private access-token cache in Quotio's application data directory. Usage cache files
   never contain those tokens.
 - Dates without a timezone in Amp output have no invented reset instant.
 - Factory windows whose end is in the past remain unknown until replaced by fresh data.

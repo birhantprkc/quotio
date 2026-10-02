@@ -208,7 +208,7 @@ fn first_date(
     Ok(None)
 }
 
-fn native_file(path: &Path) -> Result<Option<Vec<u8>>, ProviderError> {
+pub(crate) fn native_file(path: &Path) -> Result<Option<Vec<u8>>, ProviderError> {
     let before = match fs::symlink_metadata(path) {
         Ok(metadata) => metadata,
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),

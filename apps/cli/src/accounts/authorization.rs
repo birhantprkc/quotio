@@ -52,6 +52,15 @@ pub(crate) fn validate(input: &SourceInput) -> Result<(), AccountError> {
 }
 
 pub(crate) async fn authorize(mut input: SourceInput) -> Result<SourceInput, AccountError> {
+    if matches!(
+        input,
+        SourceInput::AntigravityNative {
+            location: AntigravityLocation::GeminiKeychain,
+        }
+    ) {
+        crate::providers::antigravity_auth::authorize().await?;
+        return Ok(input);
+    }
     if let SourceInput::CopilotNative {
         location: CopilotLocation::GhKeychain,
         entry_key,

@@ -2,6 +2,13 @@
 useDefault = true
 
 [[allowlists]]
+description = "Public Antigravity installed-app OAuth client used for native token refresh"
+condition = "AND"
+paths = ['''^apps/cli/src/providers/antigravity_auth\.rs$''']
+regexTarget = "secret"
+regexes = ['''^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$''']
+
+[[allowlists]]
 description = "Synthetic bearer used only by the parent-pipe integration test"
 condition = "AND"
 paths = ['''^(apps/cli/)?tests/server\.rs$''']

@@ -449,15 +449,15 @@ fn read(path: &Path) -> io::Result<Option<CachedObservation>> {
         .map(Some)
         .map_err(|_| io::ErrorKind::InvalidData.into())
 }
-struct LockedEntry {
-    path: PathBuf,
+pub(crate) struct LockedEntry {
+    pub(crate) path: PathBuf,
     #[cfg(not(windows))]
     _lock: File,
     #[cfg(windows)]
     _lock: crate::accounts::vault::VaultLock,
 }
 impl LockedEntry {
-    fn open(directory: &Path, key: &str) -> io::Result<Self> {
+    pub(crate) fn open(directory: &Path, key: &str) -> io::Result<Self> {
         #[cfg(windows)]
         {
             let lock = crate::accounts::vault::acquire(&directory.join(format!("{key}.lock")))
@@ -508,7 +508,7 @@ impl LockedEntry {
         }
     }
 
-    fn write(self, usage: &CachedObservation) -> io::Result<()> {
+    pub(crate) fn write(self, value: &impl serde::Serialize) -> io::Result<()> {
         // The per-entry OS lock covers read, fetch and rename. It is released on
         // cancellation/crash and never unlinked, so waiters lock the same inode.
         let temp = self.path.with_extension(format!(
@@ -531,7 +531,7 @@ impl LockedEntry {
                 );
             }
             let mut file = options.open(&temp)?;
-            serde_json::to_writer(&mut file, usage).map_err(|_| io::ErrorKind::InvalidData)?;
+            serde_json::to_writer(&mut file, value).map_err(|_| io::ErrorKind::InvalidData)?;
             file.flush()?;
             file.sync_all()?;
             drop(file);

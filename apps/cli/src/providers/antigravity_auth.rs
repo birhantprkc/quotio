@@ -7,15 +7,16 @@ use crate::{
     error::ProviderError,
 };
 use base64::{Engine, engine::general_purpose::STANDARD};
-use serde::Deserialize;
-use std::sync::Arc;
+use serde::{Deserialize, Serialize};
+use std::{future::Future, path::PathBuf, pin::Pin, sync::Arc};
 use time::{OffsetDateTime, format_description::well_known::Rfc3339};
 
 const MAX_CREDENTIAL_BYTES: usize = 1024 * 1024;
 const REFRESH_URL: &str = "https://oauth2.googleapis.com/token";
-// Public client identifier used by the Swift AntigravityQuotaFetcher. The secret
-// must be supplied explicitly and stays inside the owned credential vault.
+// Installed-app OAuth configuration shipped by Antigravity, also used by
+// AntigravityAccountSwitcher. These are public client credentials, not user secrets.
 const CLIENT_ID: &str = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep.apps.googleusercontent.com";
+const CLIENT_SECRET: &str = "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";
 
 #[derive(Clone, Deserialize)]
 pub(crate) struct Credential {
@@ -28,8 +29,14 @@ impl Credential {
         crate::cache::fingerprint(&[
             "antigravity_native_token",
             self.access_token.as_deref().unwrap_or_default(),
+            self.refresh_token.as_deref().unwrap_or_default(),
             self.expiry.as_deref().unwrap_or_default(),
         ])
+    }
+    fn refresh_fingerprint(&self) -> Option<String> {
+        self.refresh_token
+            .as_deref()
+            .map(|token| crate::cache::fingerprint(&["antigravity_native_refresh", token]))
     }
     fn expires_at(&self) -> Option<i64> {
         self.expiry
@@ -48,28 +55,17 @@ impl Credential {
     }
 }
 pub(crate) trait Store: Send + Sync {
-    fn credential(&self) -> Result<Credential, ProviderError>;
+    fn credential(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Credential, ProviderError>> + Send + '_>>;
+    fn cache_directory(&self) -> Option<PathBuf> {
+        None
+    }
 }
 pub(crate) struct NativeStore;
 
 pub(crate) async fn authorize() -> Result<(), ProviderError> {
-    tokio::task::spawn_blocking(|| {
-        #[cfg(target_os = "macos")]
-        {
-            let bytes = crate::keychain::with_interaction(true, || {
-                security_framework::passwords::get_generic_password("gemini", "antigravity")
-            })
-            .map_err(|_| ProviderError::LocalCredentialStorage)?;
-            parse_credential(&bytes)?;
-            Ok(())
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            Err(ProviderError::Unavailable)
-        }
-    })
-    .await
-    .map_err(|_| ProviderError::Internal)?
+    NativeStore.credential().await.map(|_| ())
 }
 
 async fn keychain_task<T: Send + 'static>(
@@ -90,7 +86,7 @@ fn valid_secret(value: &str) -> bool {
         && !value.chars().any(|c| c.is_whitespace() || c.is_control())
 }
 
-fn parse_credential(bytes: &[u8]) -> Result<Credential, ProviderError> {
+pub(crate) fn parse_credential(bytes: &[u8]) -> Result<Credential, ProviderError> {
     if bytes.len() > MAX_CREDENTIAL_BYTES {
         return Err(ProviderError::Authentication);
     }
@@ -123,7 +119,7 @@ fn parse_credential(bytes: &[u8]) -> Result<Credential, ProviderError> {
             return Err(ProviderError::Authentication);
         }
     }
-    if credential.access_token.is_none()
+    if (credential.access_token.is_none() && credential.refresh_token.is_none())
         || credential
             .expiry
             .as_ref()
@@ -134,52 +130,92 @@ fn parse_credential(bytes: &[u8]) -> Result<Credential, ProviderError> {
     Ok(credential)
 }
 
-#[cfg(target_os = "macos")]
-fn options(service: &str, account: &str) -> security_framework::passwords::PasswordOptions {
-    use core_foundation::{base::TCFType, string::CFString};
-    use security_framework_sys::item::kSecUseAuthenticationUI;
-    unsafe extern "C" {
-        static kSecUseAuthenticationUIFail: core_foundation::string::CFStringRef;
-    }
-    let mut options =
-        security_framework::passwords::PasswordOptions::new_generic_password(service, account);
-    #[allow(deprecated)]
-    unsafe {
-        options.query.push((
-            CFString::wrap_under_get_rule(kSecUseAuthenticationUI),
-            CFString::wrap_under_get_rule(kSecUseAuthenticationUIFail).into_CFType(),
-        ));
-    }
-    options
-}
-fn read_password(service: &str, account: &str) -> Result<Option<Vec<u8>>, ProviderError> {
+async fn read_keychain() -> Result<Credential, ProviderError> {
     #[cfg(target_os = "macos")]
     {
-        match crate::keychain::with_interaction(false, || {
-            security_framework::passwords::generic_password(options(service, account))
-        }) {
-            Ok(bytes) => Ok(Some(bytes)),
-            Err(error) if error.code() == -25300 => Ok(None),
-            Err(_) => Err(ProviderError::LocalCredentialStorage),
+        let (status, bytes) = tokio::time::timeout(
+            std::time::Duration::from_secs(5),
+            super::process::output_status(
+                std::path::Path::new("/usr/bin/security"),
+                &[
+                    "find-generic-password",
+                    "-s",
+                    "gemini",
+                    "-a",
+                    "antigravity",
+                    "-w",
+                ],
+            ),
+        )
+        .await
+        .map_err(|_| ProviderError::LocalCredentialStorage)?
+        .map_err(|_| ProviderError::LocalCredentialStorage)?;
+        if status.code() == Some(44)
+            && let Some(directory) = NativeStore.cache_directory()
+            && let Ok(entry) = crate::cache::LockedEntry::open(&directory, "auth")
+        {
+            let _ = std::fs::remove_file(&entry.path);
         }
+        keychain_result(status.code(), &bytes)
     }
     #[cfg(not(target_os = "macos"))]
     {
-        let _ = (service, account);
         Err(ProviderError::Unavailable)
     }
 }
-impl Store for NativeStore {
-    fn credential(&self) -> Result<Credential, ProviderError> {
-        read_keychain("gemini", "antigravity")
+#[cfg(any(target_os = "macos", test))]
+fn keychain_result(status: Option<i32>, bytes: &[u8]) -> Result<Credential, ProviderError> {
+    match status {
+        Some(0) => parse_credential(bytes),
+        Some(44) => Err(ProviderError::Authentication),
+        _ => Err(ProviderError::LocalCredentialStorage),
     }
 }
-fn read_keychain(service: &str, account: &str) -> Result<Credential, ProviderError> {
-    parse_credential(&read_password(service, account)?.ok_or(ProviderError::Authentication)?)
+impl Store for NativeStore {
+    fn credential(
+        &self,
+    ) -> Pin<Box<dyn Future<Output = Result<Credential, ProviderError>> + Send + '_>> {
+        Box::pin(read_keychain())
+    }
+    fn cache_directory(&self) -> Option<PathBuf> {
+        directories::ProjectDirs::from("", "", "quotio")
+            .map(|dirs| dirs.data_dir().join("antigravity"))
+    }
+}
+
+#[derive(Deserialize, Serialize)]
+struct CachedToken {
+    access_token: String,
+    expires_at: i64,
+    source_fingerprint: String,
+}
+async fn cached_token(
+    directory: Option<PathBuf>,
+    source: &Credential,
+    now: OffsetDateTime,
+) -> Option<CachedToken> {
+    let path = directory?.join("auth.json");
+    let fingerprint = source.refresh_fingerprint()?;
+    keychain_task(move || {
+        let bytes = super::catalog::oauth_cloud::native_file(&path)?
+            .ok_or(ProviderError::Authentication)?;
+        let cached: CachedToken =
+            serde_json::from_slice(&bytes).map_err(|_| ProviderError::InvalidData)?;
+        if cached.source_fingerprint != fingerprint
+            || cached.expires_at <= now.unix_timestamp() + 60
+            || !valid_secret(&cached.access_token)
+        {
+            return Err(ProviderError::Authentication);
+        }
+        Ok(cached)
+    })
+    .await
+    .ok()
 }
 
 pub(crate) struct Session {
     pub token: Secret,
+    expires_at: Option<i64>,
     credential: Credential,
     store: Arc<dyn Store>,
 }
@@ -188,40 +224,131 @@ impl Session {
         store: Arc<dyn Store>,
         context: &ProviderContext,
     ) -> Result<Self, ProviderError> {
-        let source = store.clone();
-        let credential = keychain_task(move || source.credential()).await?;
-        let token = credential
-            .usable_token(context.clock.now())
-            .ok_or(ProviderError::OwnerRefreshRequired)?;
-        Ok(Self {
+        Self::load_at(store, context, REFRESH_URL).await
+    }
+    pub(crate) async fn load_at(
+        store: Arc<dyn Store>,
+        context: &ProviderContext,
+        endpoint: &str,
+    ) -> Result<Self, ProviderError> {
+        let credential = store.credential().await?;
+        let mut expires_at = credential.expires_at();
+        let token = if let Some(token) = credential.usable_token(context.clock.now()) {
+            token
+        } else if let Some(cached) =
+            cached_token(store.cache_directory(), &credential, context.clock.now()).await
+        {
+            expires_at = Some(cached.expires_at);
+            Secret(cached.access_token)
+        } else {
+            Secret(String::new())
+        };
+        let mut session = Self {
             token,
+            expires_at,
             credential,
             store,
-        })
+        };
+        if session.token.0.is_empty() {
+            session.refresh_at(context, endpoint).await?;
+        }
+        session.verify().await?;
+        Ok(session)
     }
     pub async fn verify(&self) -> Result<(), ProviderError> {
-        let store = self.store.clone();
-        let fingerprint = self.credential.fingerprint();
-        keychain_task(move || {
-            if store.credential()?.fingerprint() != fingerprint {
-                return Err(ProviderError::Authentication);
+        if self.store.credential().await?.fingerprint() != self.credential.fingerprint() {
+            return Err(ProviderError::Authentication);
+        }
+        Ok(())
+    }
+    pub async fn refresh(&mut self, context: &ProviderContext) -> Result<(), ProviderError> {
+        self.refresh_at(context, REFRESH_URL).await
+    }
+    async fn refresh_at(
+        &mut self,
+        context: &ProviderContext,
+        endpoint: &str,
+    ) -> Result<(), ProviderError> {
+        let refresh_token = self
+            .credential
+            .refresh_token
+            .as_ref()
+            .ok_or(ProviderError::OwnerRefreshRequired)?;
+        let entry = if let Some(directory) = self.store.cache_directory() {
+            loop {
+                match crate::cache::LockedEntry::open(&directory, "auth") {
+                    Ok(entry) => break Some(entry),
+                    Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => {
+                        tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                    }
+                    Err(_) => {
+                        tracing::warn!("Antigravity refreshed-token cache is unavailable");
+                        break None;
+                    }
+                }
             }
-            Ok(())
-        })
+        } else {
+            None
+        };
+        self.verify().await?;
+        if let Some(cached) = cached_token(
+            self.store.cache_directory(),
+            &self.credential,
+            context.clock.now(),
+        )
         .await
+            && cached.access_token != self.token.0
+        {
+            self.token = Secret(cached.access_token);
+            self.expires_at = Some(cached.expires_at);
+            return Ok(());
+        }
+        let credential = accounts::Credential::AntigravityOAuth {
+            access_token: self.token.0.clone(),
+            refresh_token: refresh_token.clone(),
+            expires_at: self.expires_at.unwrap_or_default(),
+            client_id: CLIENT_ID.into(),
+            client_secret: CLIENT_SECRET.into(),
+            refresh_pending: false,
+        };
+        let updated = refresh_owned_at(context, &credential, endpoint)
+            .await
+            .map_err(|error| match error {
+                AccountError::Provider(error) => error,
+                _ => ProviderError::InvalidData,
+            })?;
+        self.verify().await?;
+        if let accounts::Credential::AntigravityOAuth {
+            access_token,
+            expires_at,
+            ..
+        } = updated
+        {
+            if let Some(entry) = entry {
+                let cached = CachedToken {
+                    access_token: access_token.clone(),
+                    expires_at,
+                    source_fingerprint: self.credential.refresh_fingerprint().unwrap(),
+                };
+                if entry.write(&cached).is_err() {
+                    tracing::warn!("Could not persist Antigravity refreshed access token");
+                }
+            }
+            self.token = Secret(access_token);
+            self.expires_at = Some(expires_at);
+        }
+        Ok(())
     }
 }
 
 pub(crate) async fn usage_cache_identity() -> Option<String> {
-    keychain_task(|| {
-        let credential = NativeStore.credential()?;
-        credential
-            .usable_token(OffsetDateTime::now_utc())
-            .ok_or(ProviderError::Authentication)?;
-        Ok(credential.fingerprint())
-    })
-    .await
-    .ok()
+    let credential = NativeStore.credential().await.ok()?;
+    if credential.usable_token(OffsetDateTime::now_utc()).is_none()
+        && credential.refresh_token.is_none()
+    {
+        return None;
+    }
+    Some(credential.fingerprint())
 }
 
 pub async fn reference_token(
@@ -233,7 +360,21 @@ pub async fn reference_token(
             if source.path.is_some() {
                 return Err(AccountError::Input);
             }
-            keychain_task(move || read_keychain("gemini", "antigravity")).await?
+            let credential = NativeStore.credential().await?;
+            if credential.usable_token(OffsetDateTime::now_utc()).is_none()
+                && let Some(cached) = cached_token(
+                    NativeStore.cache_directory(),
+                    &credential,
+                    OffsetDateTime::now_utc(),
+                )
+                .await
+            {
+                return Ok(accounts::Credential::AntigravityToken {
+                    access_token: cached.access_token,
+                    expires_at: Some(cached.expires_at),
+                });
+            }
+            credential
         }
         AntigravityLocation::StateDb => {
             let path = source.path.clone().ok_or(AccountError::Input)?;
@@ -543,15 +684,216 @@ mod tests {
 
     struct MemoryStore(Mutex<Credential>);
     impl Store for MemoryStore {
-        fn credential(&self) -> Result<Credential, ProviderError> {
-            Ok(self.0.lock().unwrap().clone())
+        fn credential(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<Credential, ProviderError>> + Send + '_>> {
+            Box::pin(async { Ok(self.0.lock().unwrap().clone()) })
+        }
+    }
+    struct RefreshStore {
+        source: Mutex<Result<Credential, ProviderError>>,
+        directory: PathBuf,
+    }
+    impl RefreshStore {
+        fn new() -> Arc<Self> {
+            Arc::new(Self {
+                source: Mutex::new(Ok(Credential {
+                    access_token: Some("original".into()),
+                    refresh_token: Some("owner-refresh&=+".into()),
+                    expiry: Some("1970-01-01T00:00:00Z".into()),
+                })),
+                directory: std::env::temp_dir().join(format!(
+                    "quotio-native-refresh-{}",
+                    accounts::random_string().unwrap()
+                )),
+            })
+        }
+    }
+    impl Drop for RefreshStore {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.directory);
+        }
+    }
+    impl Store for RefreshStore {
+        fn credential(
+            &self,
+        ) -> Pin<Box<dyn Future<Output = Result<Credential, ProviderError>> + Send + '_>> {
+            Box::pin(async { self.source.lock().unwrap().clone() })
+        }
+        fn cache_directory(&self) -> Option<PathBuf> {
+            Some(self.directory.clone())
         }
     }
     #[tokio::test]
-    async fn borrowed_session_never_refreshes() {
+    async fn native_refresh_cache_follows_readable_login_without_owner_writes() {
+        let store = RefreshStore::new();
+        let context = http::fixture::context();
+        let original = store.credential().await.unwrap();
+        let (endpoint, requests) = http::fixture::server(vec![
+            json!({"access_token":"fresh-one","refresh_token":"ignored-rotation","expires_in":3600}),
+            json!({"access_token":"fresh-two","expires_in":1800}),
+        ])
+        .await;
+        let first = Session::load_at(store.clone(), &context, &endpoint)
+            .await
+            .unwrap();
+        let second = Session::load_at(store.clone(), &context, &endpoint)
+            .await
+            .unwrap();
+        assert_eq!(first.token.0, "fresh-one");
+        assert_eq!(second.token.0, "fresh-one");
+        assert_eq!(first.expires_at, Some(3600));
+        assert_eq!(
+            original.fingerprint(),
+            store.credential().await.unwrap().fingerprint()
+        );
+        let contents = std::fs::read_to_string(store.directory.join("auth.json")).unwrap();
+        assert!(!contents.contains("owner-refresh"));
+        assert!(!contents.contains("ignored-rotation"));
+        assert!(!contents.contains(CLIENT_SECRET));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                std::fs::metadata(store.directory.join("auth.json"))
+                    .unwrap()
+                    .permissions()
+                    .mode()
+                    & 0o777,
+                0o600
+            );
+        }
+        for error in [
+            ProviderError::LocalCredentialStorage,
+            ProviderError::Authentication,
+        ] {
+            *store.source.lock().unwrap() = Err(error);
+            assert!(
+                matches!(Session::load_at(store.clone(), &context, &endpoint).await, Err(actual) if actual == error)
+            );
+        }
+        let mut switched = original;
+        switched.refresh_token = Some("another-login".into());
+        *store.source.lock().unwrap() = Ok(switched.clone());
+        assert_eq!(first.verify().await, Err(ProviderError::Authentication));
+        let third = Session::load_at(store.clone(), &context, &endpoint)
+            .await
+            .unwrap();
+        assert_eq!(third.token.0, "fresh-two");
+        assert_eq!(third.expires_at, Some(1800));
+        assert_eq!(
+            switched.fingerprint(),
+            store.credential().await.unwrap().fingerprint()
+        );
+        let requests = requests.await.unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].contains("refresh_token=owner-refresh%26%3D%2B"));
+        assert!(requests[1].contains("refresh_token=another-login"));
+        assert!(requests[0].contains("grant_type=refresh_token"));
+        for (expires_at, usable) in [(60, false), (61, true)] {
+            let cached = CachedToken {
+                access_token: "boundary-token".into(),
+                expires_at,
+                source_fingerprint: switched.refresh_fingerprint().unwrap(),
+            };
+            crate::cache::LockedEntry::open(&store.directory, "auth")
+                .unwrap()
+                .write(&cached)
+                .unwrap();
+            assert_eq!(
+                cached_token(store.cache_directory(), &switched, context.clock.now())
+                    .await
+                    .is_some(),
+                usable
+            );
+        }
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let path = store.directory.join("auth.json");
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o644)).unwrap();
+            assert!(
+                cached_token(store.cache_directory(), &switched, context.clock.now())
+                    .await
+                    .is_none()
+            );
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600)).unwrap();
+            std::fs::rename(&path, store.directory.join("target.json")).unwrap();
+            std::os::unix::fs::symlink("target.json", &path).unwrap();
+            assert!(
+                cached_token(store.cache_directory(), &switched, context.clock.now())
+                    .await
+                    .is_none()
+            );
+        }
+    }
+    #[tokio::test]
+    async fn native_refresh_serializes_and_reuses_tokens_after_auth_rejection() {
+        let store = RefreshStore::new();
+        let context = http::fixture::context();
+        let (endpoint, requests) =
+            http::fixture::server(vec![json!({"access_token":"fresh","expires_in":3600})]).await;
+        let (first, second) = tokio::join!(
+            Session::load_at(store.clone(), &context, &endpoint),
+            Session::load_at(store.clone(), &context, &endpoint),
+        );
+        assert_eq!(first.unwrap().token.0, "fresh");
+        assert_eq!(second.unwrap().token.0, "fresh");
+        assert_eq!(requests.await.unwrap().len(), 1);
+        store.source.lock().unwrap().as_mut().unwrap().expiry = None;
+        let mut session = Session::load_at(store.clone(), &context, "http://127.0.0.1:9")
+            .await
+            .unwrap();
+        assert_eq!(session.token.0, "original");
+        session
+            .refresh_at(&context, "http://127.0.0.1:9")
+            .await
+            .unwrap();
+        assert_eq!(session.token.0, "fresh");
+    }
+    #[tokio::test]
+    async fn native_refresh_keeps_failures_distinct_and_rejects_login_rotation() {
+        let context = http::fixture::context();
+        for (status, expected) in [
+            (400, ProviderError::Authentication),
+            (429, ProviderError::RateLimited),
+            (503, ProviderError::Transient),
+        ] {
+            let store = RefreshStore::new();
+            let before = store.credential().await.unwrap().fingerprint();
+            let (endpoint, requests) =
+                http::fixture::server_status(vec![(status, json!({"error":"fixture"}))]).await;
+            assert!(
+                matches!(Session::load_at(store.clone(), &context, &endpoint).await, Err(error) if error == expected)
+            );
+            assert_eq!(requests.await.unwrap().len(), 1);
+            assert_eq!(store.credential().await.unwrap().fingerprint(), before);
+            assert!(!store.directory.join("auth.json").exists());
+        }
+        let store = RefreshStore::new();
+        let rotating = store.clone();
+        let (endpoint, requests) = http::fixture::server_status_with_action(
+            vec![(
+                200,
+                json!({"access_token":"old-login-fresh-token","expires_in":3600}),
+            )],
+            move |_| {
+                *rotating.source.lock().unwrap() = Err(ProviderError::Authentication);
+            },
+        )
+        .await;
+        assert!(matches!(
+            Session::load_at(store.clone(), &context, &endpoint).await,
+            Err(ProviderError::Authentication)
+        ));
+        assert_eq!(requests.await.unwrap().len(), 1);
+        assert!(!store.directory.join("auth.json").exists());
+    }
+    #[tokio::test]
+    async fn access_only_session_requires_owner_refresh_and_detects_rotation() {
         let store = Arc::new(MemoryStore(Mutex::new(Credential {
             access_token: Some("original".into()),
-            refresh_token: Some("owner-refresh".into()),
+            refresh_token: None,
             expiry: None,
         })));
         let context = http::fixture::context();
@@ -591,13 +933,19 @@ mod tests {
         for raw in [
             "{}",
             "raw-token",
-            "{\"refresh_token\":\"x\"}",
             "{\"access_token\":\"x\",\"expiry\":\"bad\"}",
             "go-keyring-base64:bad",
         ] {
             assert!(parse_credential(raw.as_bytes()).is_err());
         }
         assert!(parse_credential(&vec![b'a'; MAX_CREDENTIAL_BYTES + 1]).is_err());
+        assert_eq!(
+            parse_credential(br#"{"token":{"refresh_token":"refresh-only"}}"#)
+                .unwrap()
+                .refresh_token
+                .as_deref(),
+            Some("refresh-only")
+        );
     }
     fn encode_varint(mut value: u64) -> Vec<u8> {
         let mut bytes = vec![];
@@ -741,8 +1089,11 @@ mod tests {
     async fn native_state_rotation_invalidates_borrowed_session() {
         struct StateStore(Mutex<Vec<u8>>);
         impl Store for StateStore {
-            fn credential(&self) -> Result<Credential, ProviderError> {
-                parse_state_rows(&self.0.lock().unwrap())
+            fn credential(
+                &self,
+            ) -> Pin<Box<dyn Future<Output = Result<Credential, ProviderError>> + Send + '_>>
+            {
+                Box::pin(async { parse_state_rows(&self.0.lock().unwrap()) })
             }
         }
         let store = Arc::new(StateStore(Mutex::new(
@@ -947,7 +1298,7 @@ mod tests {
     #[test]
     fn owned_intake_requires_the_supported_client_and_explicit_secret() {
         for (key, value) in [
-            ("client_id", json!("123-other.apps.googleusercontent.com")),
+            ("client_id", json!("unsupported-client")),
             ("client_secret", json!("")),
             ("access_token", json!("bad token")),
             ("refresh_token", json!("")),
@@ -958,14 +1309,26 @@ mod tests {
             assert!(owned_credential(serde_json::from_value(input).unwrap()).is_err());
         }
     }
-    #[cfg(target_os = "macos")]
     #[test]
-    fn keychain_queries_never_request_interaction() {
-        use core_foundation::{base::TCFType, string::CFString};
-        #[allow(deprecated)]
-        let query = options("synthetic-service", "synthetic-account").query;
-        let key = CFString::new("u_AuthUI");
-        let fail = CFString::new("u_AuthUIF").into_CFType();
-        assert!(query.iter().any(|(k, v)| k == &key && v == &fail));
+    fn keychain_helper_distinguishes_missing_denied_and_malformed_credentials() {
+        let bytes = br#"{"token":{"access_token":"fixture"}}"#;
+        assert_eq!(
+            keychain_result(Some(0), bytes)
+                .unwrap()
+                .access_token
+                .as_deref(),
+            Some("fixture")
+        );
+        for (status, expected) in [
+            (Some(44), ProviderError::Authentication),
+            (Some(51), ProviderError::LocalCredentialStorage),
+            (None, ProviderError::LocalCredentialStorage),
+        ] {
+            assert!(matches!(keychain_result(status, bytes), Err(error) if error == expected));
+        }
+        assert!(matches!(
+            keychain_result(Some(0), b"broken-json"),
+            Err(ProviderError::Authentication)
+        ));
     }
 }

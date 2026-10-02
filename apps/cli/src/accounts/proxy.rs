@@ -1,4 +1,4 @@
-//! Read-only CLIProxyAPI credentials; the source application owns token rotation.
+//! Read-only CLIProxyAPI files; Antigravity refreshes use a separate Quotio cache.
 mod config;
 
 use super::{AccountError, Credential};
@@ -6,15 +6,19 @@ use crate::{
     cli::Provider,
     domain::{AccountOrigin, AccountRef, ProviderId},
     error::ProviderError,
-    providers::{CredentialStore, FetchFuture, ProviderAdapter, ProviderContext, Secret},
+    providers::{
+        CredentialStore, FetchFuture, ProviderAdapter, ProviderContext, Secret, antigravity_auth,
+    },
 };
 use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
 use serde_json::Value;
 use std::{
     collections::HashMap,
     fs::OpenOptions,
+    future::Future,
     io::Read,
     path::{Component, Path, PathBuf},
+    pin::Pin,
     sync::Arc,
 };
 use time::{Duration, OffsetDateTime, format_description::well_known::Rfc3339};
@@ -32,6 +36,10 @@ impl CredentialStore for Keys {
 enum Material {
     Codex(Credential),
     Keys(HashMap<String, String>),
+    Antigravity {
+        credential: antigravity_auth::Credential,
+        project: Option<String>,
+    },
 }
 
 struct Snapshot {
@@ -39,6 +47,7 @@ struct Snapshot {
     material: Material,
 }
 
+#[derive(Clone)]
 struct BorrowedProxyProvider {
     path: PathBuf,
     provider: Provider,
@@ -65,6 +74,29 @@ impl BorrowedProxyProvider {
                 &String::from_utf8_lossy(&bytes),
             ]),
             material: material(provider, &value, now)?,
+        })
+    }
+}
+
+impl antigravity_auth::Store for BorrowedProxyProvider {
+    fn credential(
+        &self,
+    ) -> Pin<
+        Box<dyn Future<Output = Result<antigravity_auth::Credential, ProviderError>> + Send + '_>,
+    > {
+        Box::pin(async move {
+            match self.snapshot(OffsetDateTime::now_utc())?.material {
+                Material::Antigravity { credential, .. } => Ok(credential),
+                _ => Err(ProviderError::InvalidData),
+            }
+        })
+    }
+
+    fn cache_directory(&self) -> Option<PathBuf> {
+        directories::ProjectDirs::from("", "", "quotio").map(|dirs| {
+            dirs.data_dir()
+                .join("antigravity/proxy")
+                .join(crate::cache::fingerprint(&[&self.path.to_string_lossy()]))
         })
     }
 }
@@ -113,6 +145,21 @@ impl ProviderAdapter for BorrowedProxyProvider {
                     };
                     self.provider.adapter().fetch(&scoped).await?
                 }
+                Material::Antigravity { project, .. } => {
+                    let scoped = ProviderContext {
+                        http: context.http.clone(),
+                        clock: context.clock.clone(),
+                        credentials: Arc::new(Keys(
+                            project
+                                .map(|value| ("ANTIGRAVITY_PROJECT".into(), value))
+                                .into_iter()
+                                .collect(),
+                        )),
+                    };
+                    crate::providers::antigravity::AntigravityProvider
+                        .fetch_from_store(&scoped, Arc::new(self.clone()))
+                        .await?
+                }
             };
             if self.snapshot(context.clock.now())?.digest != before.digest {
                 return Err(ProviderError::Transient);
@@ -121,6 +168,12 @@ impl ProviderAdapter for BorrowedProxyProvider {
             Ok(usage)
         })
     }
+}
+
+pub fn default_auth_directory() -> Option<PathBuf> {
+    directories::BaseDirs::new()
+        .filter(|dirs| dirs.home_dir().is_dir())
+        .map(|dirs| dirs.home_dir().join(".cli-proxy-api"))
 }
 
 pub fn validate_directory(path: &Path) -> Result<(), AccountError> {
@@ -317,6 +370,31 @@ fn material(
     if value.get("service_account").is_some() {
         return Err(ProviderError::Unavailable);
     }
+    if provider == Provider::Antigravity {
+        let expires_at = expiry(value)?;
+        let expiry = expires_at
+            .map(|date| {
+                date.format(&Rfc3339)
+                    .map_err(|_| ProviderError::InvalidData)
+            })
+            .transpose()?;
+        let bytes = serde_json::to_vec(&serde_json::json!({
+            "access_token": text(value, &["access_token", "accessToken"]),
+            "refresh_token": text(value, &["refresh_token", "refreshToken"]),
+            "expiry": expiry,
+        }))
+        .map_err(|_| ProviderError::InvalidData)?;
+        let credential = antigravity_auth::parse_credential(&bytes)?;
+        if credential.refresh_token.is_none()
+            && expires_at.is_some_and(|expiry| expiry <= now + Duration::minutes(5))
+        {
+            return Err(ProviderError::OwnerRefreshRequired);
+        }
+        return Ok(Material::Antigravity {
+            credential,
+            project: text(value, &["project_id", "projectId", "project"]).map(str::to_owned),
+        });
+    }
     let token_value = if provider == Provider::Catalog("gemini") {
         value
             .get("token")
@@ -367,7 +445,6 @@ fn material(
         Provider::Catalog("copilot") => "COPILOT_API_TOKEN",
         Provider::Catalog("kiro") => "KIRO_ACCESS_TOKEN",
         Provider::Catalog("vertexai") => "VERTEXAI_ACCESS_TOKEN",
-        Provider::Antigravity => "ANTIGRAVITY_ACCESS_TOKEN",
         _ => return Err(ProviderError::InvalidData),
     };
     keys.insert(key.into(), token.into());
@@ -382,10 +459,9 @@ fn material(
         && let Some(value) = text(value, &["project_id", "projectId", "project"])
     {
         keys.insert(
-            if provider == Provider::Catalog("gemini") {
-                "GEMINI_PROJECT"
-            } else {
-                "VERTEXAI_PROJECT_ID"
+            match provider {
+                Provider::Catalog("gemini") => "GEMINI_PROJECT",
+                _ => "VERTEXAI_PROJECT_ID",
             }
             .into(),
             value.into(),
@@ -643,6 +719,118 @@ mod tests {
             Some(ProviderError::SourceDisabled)
         );
         assert_eq!(std::fs::read(path).unwrap(), bytes);
+        std::fs::remove_dir_all(directory).unwrap();
+    }
+
+    #[test]
+    fn borrowed_antigravity_retains_project_and_validates_refresh_credentials() {
+        for field in ["project_id", "projectId", "project"] {
+            let value = serde_json::json!({"type":"antigravity", "access_token":"borrowed-token", "refresh_token":"owner-only", field:"borrowed-project"});
+            let Material::Antigravity {
+                credential,
+                project,
+            } = material(Provider::Antigravity, &value, OffsetDateTime::now_utc()).unwrap()
+            else {
+                panic!()
+            };
+            assert_eq!(credential.access_token.as_deref(), Some("borrowed-token"));
+            assert_eq!(credential.refresh_token.as_deref(), Some("owner-only"));
+            assert_eq!(project.as_deref(), Some("borrowed-project"));
+        }
+        for value in [
+            serde_json::json!({"access_token":"token", "refresh_token":"invalid token"}),
+            serde_json::json!({"refresh_token":"owner-only", "expired":"invalid-date"}),
+            serde_json::json!({}),
+        ] {
+            assert!(material(Provider::Antigravity, &value, OffsetDateTime::now_utc()).is_err());
+        }
+    }
+
+    #[tokio::test]
+    async fn borrowed_antigravity_refreshes_expired_files_without_owner_writes() {
+        use antigravity_auth::{Session, Store};
+        struct TestStore(BorrowedProxyProvider, PathBuf);
+        impl Store for TestStore {
+            fn credential(
+                &self,
+            ) -> Pin<
+                Box<
+                    dyn Future<Output = Result<antigravity_auth::Credential, ProviderError>>
+                        + Send
+                        + '_,
+                >,
+            > {
+                self.0.credential()
+            }
+            fn cache_directory(&self) -> Option<PathBuf> {
+                Some(self.1.clone())
+            }
+        }
+        let directory = directory();
+        let path = directory.join("antigravity.json");
+        let original = serde_json::json!({
+            "type":"antigravity", "access_token":"expired-access", "refresh_token":"owner-refresh",
+            "expired":"1970-01-01T00:00:00Z", "project_id":"proxy-project", "disabled":false,
+        });
+        let bytes = serde_json::to_vec(&original).unwrap();
+        std::fs::write(&path, &bytes).unwrap();
+        let source = inspect(path.clone()).unwrap().unwrap();
+        let mut other_source = source.clone();
+        other_source.path = directory.join("other.json");
+        assert_ne!(source.cache_directory(), other_source.cache_directory());
+        assert_ne!(
+            source.cache_directory(),
+            antigravity_auth::NativeStore.cache_directory()
+        );
+        let store = Arc::new(TestStore(source, directory.join("cache")));
+        let context = crate::providers::http::fixture::context();
+        let (endpoint, requests) = crate::providers::http::fixture::server(vec![
+            serde_json::json!({"access_token":"fresh-proxy", "expires_in":3600}),
+            serde_json::json!({"access_token":"fresh-switched", "expires_in":1800}),
+        ])
+        .await;
+        let first = Session::load_at(store.clone(), &context, &endpoint)
+            .await
+            .unwrap();
+        let second = Session::load_at(store.clone(), &context, &endpoint)
+            .await
+            .unwrap();
+        assert_eq!(first.token.0, "fresh-proxy");
+        assert_eq!(second.token.0, "fresh-proxy");
+        assert_eq!(std::fs::read(&path).unwrap(), bytes);
+        let cache = std::fs::read_to_string(store.1.join("auth.json")).unwrap();
+        assert!(!cache.contains("owner-refresh"));
+        assert!(!cache.contains("expired-access"));
+        let mut switched = original.clone();
+        switched["refresh_token"] = serde_json::json!("different-owner");
+        std::fs::write(&path, serde_json::to_vec(&switched).unwrap()).unwrap();
+        assert_eq!(first.verify().await, Err(ProviderError::Authentication));
+        let third = Session::load_at(store.clone(), &context, &endpoint)
+            .await
+            .unwrap();
+        assert_eq!(third.token.0, "fresh-switched");
+        let requests = requests.await.unwrap();
+        assert_eq!(requests.len(), 2);
+        assert!(requests[0].contains("refresh_token=owner-refresh"));
+        assert!(requests[1].contains("refresh_token=different-owner"));
+        switched["disabled"] = serde_json::json!(true);
+        std::fs::write(&path, serde_json::to_vec(&switched).unwrap()).unwrap();
+        assert!(matches!(
+            Session::load_at(store.clone(), &context, &endpoint).await,
+            Err(ProviderError::SourceDisabled)
+        ));
+        switched["disabled"] = serde_json::json!(false);
+        switched.as_object_mut().unwrap().remove("refresh_token");
+        std::fs::write(&path, serde_json::to_vec(&switched).unwrap()).unwrap();
+        assert!(matches!(
+            Session::load_at(store.clone(), &context, &endpoint).await,
+            Err(ProviderError::OwnerRefreshRequired)
+        ));
+        std::fs::remove_file(&path).unwrap();
+        assert!(matches!(
+            Session::load_at(store, &context, &endpoint).await,
+            Err(ProviderError::CredentialStorage)
+        ));
         std::fs::remove_dir_all(directory).unwrap();
     }
 
