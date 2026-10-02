@@ -67,11 +67,6 @@ final class ProxyScreenModelTests: XCTestCase {
         XCTAssertEqual(actions, ["initialize", "setPort:9000"])
     }
 
-    func testSettingsNavigationIncludesCLIProxyAPI() {
-        XCTAssertTrue(NavigationPage.settingsPages.contains(.proxy))
-        XCTAssertEqual(NavigationPage.proxy.settingsTitle, "CLIProxyAPI")
-    }
-
     func testInitializationStartsOnlyWhenEnabledAndInstalled() async {
         for (enabled, installed, running, shouldStart) in [
             (true, true, false, true),

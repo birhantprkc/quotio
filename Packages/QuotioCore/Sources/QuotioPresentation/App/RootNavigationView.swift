@@ -22,9 +22,21 @@ public struct RootNavigationView: View {
                 Label("nav.accounts".localized(), systemImage: "person.2")
                     .badge(attentionCount)
                     .tag(NavigationPage.providers)
+                Label(NavigationPage.companion.settingsTitle, systemImage: NavigationPage.companion.icon)
+                    .tag(NavigationPage.companion)
+                Label(NavigationPage.proxy.settingsTitle, systemImage: NavigationPage.proxy.icon)
+                    .tag(NavigationPage.proxy)
                 Section("settings.application".localized()) {
-                    ForEach(NavigationPage.settingsPages) { page in
+                    ForEach(NavigationPage.applicationPages) { page in
                         Label(page.settingsTitle, systemImage: page.icon).tag(page)
+                    }
+                }
+                Section {
+                    Label(NavigationPage.updates.settingsTitle, systemImage: NavigationPage.updates.icon)
+                        .tag(NavigationPage.updates)
+                } header: {
+                    VStack {
+                        Divider()
                     }
                 }
             }
@@ -42,7 +54,7 @@ public struct RootNavigationView: View {
 }
 
 extension NavigationPage {
-    static let settingsPages: [Self] = [.general, .companion, .menuBar, .notifications, .privacy, .proxy, .updates]
+    static let applicationPages: [Self] = [.general, .menuBar, .notifications, .privacy]
 
     @MainActor var settingsTitle: String {
         switch self {
