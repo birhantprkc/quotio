@@ -23,14 +23,16 @@ SIGNING_IDENTITY="${SIGNING_IDENTITY:-Developer ID Application}"
 NOTARYTOOL_KEYCHAIN_PROFILE="${NOTARYTOOL_KEYCHAIN_PROFILE:-}"
 NOTARYTOOL_KEYCHAIN="${NOTARYTOOL_KEYCHAIN:-}"
 NOTARYTOOL_AUTH_ARGS=()
+NOTARIZATION_PROVIDER=notarytool
 
 usage() {
-    echo "Usage: $0 [--version VERSION] [--distribution] [--generate-appcast]"
+    echo "Usage: $0 [--version VERSION] [--distribution] [--generate-appcast] [--notarization-provider PROVIDER]"
     echo ""
     echo "Build the Release app and create DMG and ZIP artifacts."
     echo "  --version VERSION      update the Xcode version and CHANGELOG before building"
     echo "  --distribution         require Developer ID signing and Apple notarization"
     echo "  --generate-appcast     sign stable ZIPs and create appcast.xml using SPARKLE_PRIVATE_KEY"
+    echo "  --notarization-provider PROVIDER  use notarytool (default) or asc with its stored auth"
 }
 
 log() {
@@ -86,16 +88,27 @@ prepare_release_version() {
 }
 
 configure_distribution() {
-    [ -n "${NOTARYTOOL_KEYCHAIN_PROFILE}" ] \
-        || fail "NOTARYTOOL_KEYCHAIN_PROFILE is required for --distribution"
-
-    NOTARYTOOL_AUTH_ARGS=(--keychain-profile "${NOTARYTOOL_KEYCHAIN_PROFILE}")
-    if [ -n "${NOTARYTOOL_KEYCHAIN}" ]; then
-        NOTARYTOOL_AUTH_ARGS+=(--keychain "${NOTARYTOOL_KEYCHAIN}")
+    if [ "${NOTARIZATION_PROVIDER}" = asc ]; then
+        require_command asc
+    else
+        [ -n "${NOTARYTOOL_KEYCHAIN_PROFILE}" ] \
+            || fail "NOTARYTOOL_KEYCHAIN_PROFILE is required for --distribution"
+        NOTARYTOOL_AUTH_ARGS=(--keychain-profile "${NOTARYTOOL_KEYCHAIN_PROFILE}")
+        if [ -n "${NOTARYTOOL_KEYCHAIN}" ]; then
+            NOTARYTOOL_AUTH_ARGS+=(--keychain "${NOTARYTOOL_KEYCHAIN}")
+        fi
     fi
 
     security find-identity -v -p codesigning | grep -F "${SIGNING_IDENTITY}" >/dev/null \
         || fail "code-signing identity not found: ${SIGNING_IDENTITY}"
+}
+
+submit_for_notarization() {
+    if [ "${NOTARIZATION_PROVIDER}" = asc ]; then
+        asc notarization submit --file "$1" --wait
+    else
+        xcrun notarytool submit "$1" "${NOTARYTOOL_AUTH_ARGS[@]}" --wait
+    fi
 }
 
 sign_macho_files() {
@@ -170,7 +183,7 @@ notarize_app() {
 
     log "Submitting app for notarization"
     ditto -c -k --sequesterRsrc --keepParent "${APP_PATH}" "${submission_zip}"
-    xcrun notarytool submit "${submission_zip}" "${NOTARYTOOL_AUTH_ARGS[@]}" --wait
+    submit_for_notarization "${submission_zip}"
     xcrun stapler staple "${APP_PATH}"
     xcrun stapler validate "${APP_PATH}"
     spctl --assess --type execute --verbose=2 "${APP_PATH}"
@@ -182,7 +195,7 @@ notarize_dmg() {
     log "Signing and notarizing ${dmg_file}"
     codesign --force --sign "${SIGNING_IDENTITY}" --timestamp "${dmg_file}"
     codesign --verify --strict --verbose=2 "${dmg_file}"
-    xcrun notarytool submit "${dmg_file}" "${NOTARYTOOL_AUTH_ARGS[@]}" --wait
+    submit_for_notarization "${dmg_file}"
     xcrun stapler staple "${dmg_file}"
     xcrun stapler validate "${dmg_file}"
     spctl \
@@ -304,6 +317,14 @@ while [ "$#" -gt 0 ]; do
         --distribution)
             DISTRIBUTION=true
             shift
+            ;;
+        --notarization-provider)
+            [ "$#" -ge 2 ] || fail "--notarization-provider requires a value"
+            case "$2" in
+                notarytool|asc) NOTARIZATION_PROVIDER="$2" ;;
+                *) fail "notarization provider must be notarytool or asc" ;;
+            esac
+            shift 2
             ;;
         -h|--help)
             usage

@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Manage provider accounts and their login sources from provider settings, including explicit access requests for native logins.
 - Keep account names, source selection, quota status, and refresh settings in the bundled Quotio helper. The app displays the helper's resolved results.
+- Notarize local distribution builds with existing ASC authentication using `--notarization-provider asc`, without exporting a Keychain private key.
 
 ### Changed
 

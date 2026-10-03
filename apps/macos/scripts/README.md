@@ -25,4 +25,6 @@ SPARKLE_PRIVATE_KEY=... \
 
 `SIGNING_IDENTITY` defaults to `Developer ID Application`. Set it to the certificate's SHA-1 hash when more than one matching identity is installed. See `RELEASE.md` for credential setup.
 
+If `asc` already has App Store Connect credentials in the System Keychain, pass `--notarization-provider asc` to use them without a notarytool profile or private-key export. Set `ASC_PROFILE` to select a stored profile. The default remains `notarytool`, matching CI.
+
 Prerelease versions build `Quotio Beta.app` with bundle identifier `app.bytrong.quotio.beta`. Install it beside `Quotio.app`; it uses separate Quotio-owned state and manual updates. `--generate-appcast` is skipped for prereleases. See [the release guide](../RELEASE.md#independent-beta-releases) for isolation boundaries.
