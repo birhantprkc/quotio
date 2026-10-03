@@ -6,6 +6,9 @@ from pathlib import Path
 import subprocess
 
 
+SUPPLEMENTAL_LICENSES = Path(__file__).resolve().parent.parent / 'distribution' / 'licenses'
+
+
 def render(metadata):
     nodes = {node['id']: node for node in metadata['resolve']['nodes']}
     pending = [metadata['resolve']['root']]
@@ -26,6 +29,10 @@ def render(metadata):
                  and path.name.upper().startswith(('LICENSE', 'LICENCE', 'COPYING', 'NOTICE'))}
         if package.get('license_file'):
             paths.add(root / package['license_file'])
+        if not paths and package['source'] == 'registry+https://github.com/rust-lang/crates.io-index':
+            supplements = SUPPLEMENTAL_LICENSES / f"{package['name']}-{package['version']}"
+            paths = {path for path in supplements.glob('*') if path.is_file()
+                     and path.name.upper().startswith(('LICENSE', 'LICENCE', 'COPYING', 'NOTICE'))}
         if not paths:
             raise ValueError(f"Missing license text: {package['name']} {package['version']}")
         sections.append(f"\n## {package['name']} {package['version']}\n\nLicense: {package.get('license') or 'See license text'}\n")
