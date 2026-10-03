@@ -28,6 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Improve account names and quota details for Codex, Copilot, Devin, Factory, Antigravity, Amp, and Grok.
 - Only merge native and registered account sources when both carry the same verified provider subject and tenant; matching local IDs alone no longer attach another source's quota.
 - Build the beta app and bundled helper for both Apple Silicon and Intel, and create DMGs without Finder automation.
+- Sign the bundled helper and nested code before the main app during Developer ID packaging.
 
 ## [0.33.0] - 2026-09-17
 

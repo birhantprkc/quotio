@@ -102,7 +102,8 @@ sign_macho_files() {
     local binary_path
 
     while IFS= read -r binary_path; do
-        if file "${binary_path}" | grep -q "Mach-O"; then
+        if [ "${binary_path}" != "${APP_PATH}/Contents/MacOS/${APP_NAME}" ] \
+            && file "${binary_path}" | grep -q "Mach-O"; then
             codesign \
                 --force \
                 --sign "${SIGNING_IDENTITY}" \
