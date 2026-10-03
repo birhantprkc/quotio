@@ -310,6 +310,40 @@ fn observation(
             }
         })
         .collect();
+    if value.provider.0 == "antigravity" {
+        for (weekly_name, session_name) in
+            [("Weekly", "Session"), ("Claude Weekly", "Claude Session")]
+        {
+            if metrics
+                .iter()
+                .any(|metric| metric.display_name == session_name)
+            {
+                continue;
+            }
+            if let Some(weekly) = metrics.iter().find(|metric| {
+                metric.display_name == weekly_name
+                    && matches!(metric.quota, Quota::Exhausted { .. })
+            }) {
+                let session = Metric {
+                    id: crate::cache::fingerprint(&["antigravity_weekly_limit", &weekly.id]),
+                    group: weekly.group.clone(),
+                    display_name: session_name.into(),
+                    note: None,
+                    quota: Quota::from_remaining(Some(0.0)),
+                    amounts: None,
+                    consumption: None,
+                    resets_at: None,
+                    reset_description: None,
+                    fetched_at: weekly.fetched_at,
+                    provenance: Provenance {
+                        source: "antigravity_weekly_limit".into(),
+                        confidence: crate::domain::Confidence::Exact,
+                    },
+                };
+                metrics.push(session);
+            }
+        }
+    }
     if matches!(value.provider.0.as_str(), "antigravity" | "codex") {
         metrics.sort_by_key(|metric| match metric.display_name.as_str() {
             "Session" => 0,
@@ -580,6 +614,129 @@ pub fn digest(snapshot: &Snapshot) -> Result<String, crate::accounts::AccountErr
 mod tests {
     use super::*;
     #[test]
+    fn antigravity_exhausted_weekly_fills_only_missing_sessions() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/contracts/usage-v1.json"))
+                .unwrap();
+        let mut report = UsageReport {
+            schema_version: 1,
+            generated_at: OffsetDateTime::UNIX_EPOCH,
+            providers: vec![serde_json::from_value(fixture["providers"][0].clone()).unwrap()],
+            failures: vec![],
+        };
+        report.providers[0].provider.0 = "antigravity".into();
+        let original = report.providers[0].windows[0].clone();
+        for (weekly_label, session_name) in [
+            ("gemini-weekly", "Session"),
+            ("3p-weekly", "Claude Session"),
+        ] {
+            for weekly_quota in [
+                Quota::from_remaining(Some(0.0)),
+                Quota::from_remaining(Some(0.1)),
+                Quota::from_remaining(Some(100.0)),
+                Quota::Unknown,
+                Quota::Disabled,
+                Quota::Unlimited,
+            ] {
+                let mut weekly = original.clone();
+                weekly.label = weekly_label.into();
+                weekly.quota = weekly_quota.clone();
+                weekly.resets_at = Some(OffsetDateTime::UNIX_EPOCH + time::Duration::days(7));
+                report.providers[0].windows = vec![weekly];
+                let usage = observation(
+                    "account",
+                    &report.providers[0],
+                    &report,
+                    report.generated_at,
+                    time::Duration::hours(1),
+                    None,
+                );
+                let session = usage
+                    .metrics
+                    .iter()
+                    .find(|metric| metric.display_name == session_name);
+                if matches!(weekly_quota, Quota::Exhausted { .. }) {
+                    let session = session.unwrap();
+                    assert_eq!(session.quota, Quota::from_remaining(Some(0.0)));
+                    assert!(session.resets_at.is_none());
+                    assert!(session.reset_description.is_none());
+                    assert!(session.amounts.is_none());
+                    assert!(session.consumption.is_none());
+                    assert_eq!(usage.metrics[0].display_name, session_name);
+                    assert_eq!(usage.metrics[1].quota, weekly_quota);
+                } else {
+                    assert!(session.is_none());
+                }
+            }
+        }
+        report.providers[0].windows = ["gemini-weekly", "3p-weekly"]
+            .iter()
+            .map(|label| {
+                let mut window = original.clone();
+                window.label = (*label).into();
+                window.quota = Quota::from_remaining(Some(0.0));
+                window
+            })
+            .collect();
+        let usage = observation(
+            "account",
+            &report.providers[0],
+            &report,
+            report.generated_at,
+            time::Duration::hours(1),
+            None,
+        );
+        assert_eq!(
+            usage
+                .metrics
+                .iter()
+                .map(|metric| metric.display_name.as_str())
+                .collect::<Vec<_>>(),
+            ["Session", "Weekly", "Claude Session", "Claude Weekly"]
+        );
+        let mut session = original;
+        session.label = "3p-session".into();
+        session.quota = Quota::from_remaining(Some(45.0));
+        report.providers[0].windows.push(session.clone());
+        let usage = observation(
+            "account",
+            &report.providers[0],
+            &report,
+            report.generated_at,
+            time::Duration::hours(1),
+            None,
+        );
+        let sessions: Vec<_> = usage
+            .metrics
+            .iter()
+            .filter(|metric| metric.display_name == "Claude Session")
+            .collect();
+        assert_eq!(sessions.len(), 1);
+        assert_eq!(sessions[0].id, metric_id(&session));
+        assert_eq!(sessions[0].quota, session.quota);
+        assert_eq!(sessions[0].resets_at, session.resets_at);
+        report.providers[0].provider.0 = "codex".into();
+        report.providers[0].windows.truncate(1);
+        report.providers[0].windows[0].label = "Weekly".into();
+        let usage = observation(
+            "account",
+            &report.providers[0],
+            &report,
+            report.generated_at,
+            time::Duration::hours(1),
+            None,
+        );
+        assert_eq!(
+            usage
+                .metrics
+                .iter()
+                .map(|metric| metric.display_name.as_str())
+                .collect::<Vec<_>>(),
+            ["Weekly"]
+        );
+    }
+
+    #[test]
     fn quota_labels_are_projected_in_period_order_without_changing_observations() {
         let fixture: serde_json::Value =
             serde_json::from_str(include_str!("../../tests/fixtures/contracts/usage-v1.json"))
@@ -621,7 +778,7 @@ mod tests {
                     window.label = (*label).into();
                     window.quota =
                         crate::domain::Quota::from_remaining(Some(if label.contains("3p") {
-                            0.0
+                            20.0
                         } else {
                             99.0
                         }));

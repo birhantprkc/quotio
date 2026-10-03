@@ -154,6 +154,43 @@ final class StatusBarMenuSnapshotMapperTests: XCTestCase {
 
 @MainActor
 final class StatusBarMenuRendererTests: XCTestCase {
+    func testQuotaCardHeightDoesNotDependOnResetAvailability() throws {
+        _ = NSApplication.shared
+        let commands = StatusBarCommandDispatcher(handlers: StatusBarCommandHandlers(
+            refreshAll: {}, refreshProvider: { _ in }, refreshAccount: { _ in }, selectProvider: { _ in },
+            pairIPhone: {}, openApp: {}, quit: {}, menuNeedsRebuild: {}
+        ))
+        let scenarios: [(QuotaProvider, [(String, String?)])] = [
+            (.antigravity, [("Session", nil), ("Weekly", nil), ("Claude Session", nil), ("Claude Weekly", nil)]),
+            (.factoryDroid, [("5 hours", "Standard"), ("Weekly", "Standard"), ("Monthly", "Standard"), ("5 hours", "Core"), ("Weekly", "Core"), ("Monthly", "Core")])
+        ]
+        for (provider, metrics) in scenarios {
+            func cardHeight(_ resetTimes: [String]) throws -> CGFloat {
+                let models = metrics.enumerated().map { index, metric in
+                    QuotaMetric(name: metric.0, percentage: 50, resetTime: resetTimes[index], group: metric.1)
+                }
+                let snapshot = StatusBarMenuSnapshotMapper.makeSnapshot(
+                    monitorAccounts: [], quota: QuotaSnapshot(quotas: [provider: ["Account": ProviderQuota(models: models)]]),
+                    menuBarPreferences: MenuBarPreferences(selectedProvider: provider, quotaDisplayStyle: .card), language: .english
+                )
+                let renderer = StatusBarMenuRenderer(snapshot: snapshot, commands: commands)
+                let menu = renderer.buildMenu()
+                let item = try XCTUnwrap(menu.items.first { $0.title == "Account" })
+                return try XCTUnwrap(item.view).bounds.height
+            }
+            let future = "2099-01-01T00:00:00Z"
+            let expected = try cardHeight(Array(repeating: future, count: metrics.count))
+            for resetTimes in [
+                Array(repeating: "", count: metrics.count),
+                metrics.indices.map { $0.isMultiple(of: 2) ? "" : future },
+                Array(repeating: "invalid", count: metrics.count),
+                Array(repeating: "2000-01-01T00:00:00Z", count: metrics.count)
+            ] {
+                XCTAssertEqual(try cardHeight(resetTimes), expected, accuracy: 0.5, provider.rawValue)
+            }
+        }
+    }
+
     func testProviderFilterHidesItemsWithoutReplacingTrackedMenuContents() {
         var selections: [QuotaProvider?] = []
         let controller = StatusBarProviderFilterController(selectedProvider: nil) {

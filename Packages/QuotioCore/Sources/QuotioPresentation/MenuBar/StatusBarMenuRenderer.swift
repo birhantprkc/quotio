@@ -257,8 +257,6 @@ final class StatusBarMenuRenderer {
 
         if provider == .codex, let analytics = account.quota.analytics, !analytics.isEmpty {
             item.submenu = buildCodexAnalyticsSubmenu(analytics: analytics)
-        } else if provider == .antigravity && !account.quota.models.isEmpty {
-            item.submenu = buildAntigravitySubmenu(data: account.quota)
         }
 
         let cardView = MenuAccountCardView(
@@ -286,22 +284,6 @@ final class StatusBarMenuRenderer {
         return submenu
     }
 
-    // MARK: - Antigravity Submenu
-
-    private func buildAntigravitySubmenu(data: ProviderQuota) -> NSMenu {
-        let submenu = makeMenu()
-
-        for model in data.models {
-            let modelItem = viewItem(for: MenuModelDetailView(
-                model: model,
-                settings: snapshot.displaySettings
-            ), title: model.displayName)
-            submenu.addItem(modelItem)
-        }
-
-        return submenu
-    }
-    
     // MARK: - Empty State
     
     private func buildEmptyStateItem() -> NSMenuItem {
@@ -1626,6 +1608,7 @@ private struct CardGridLayout: View {
     var body: some View {
         LazyVGrid(columns: columns, spacing: 6) {
             ForEach(models, id: \.name) { (model: ModelBadgeData) in
+                let resetTime = model.formattedResetTime
                 VStack(alignment: .leading, spacing: 5) {
                     HStack(spacing: 4) {
                         Text(model.name)
@@ -1647,12 +1630,11 @@ private struct CardGridLayout: View {
                             displayMode: displayMode
                         )
                     }
-                    if let resetTime = model.formattedResetTime {
-                        Text(resetTime)
-                            .font(.caption.monospacedDigit())
-                            .foregroundStyle(.secondary)
-                            .frame(maxWidth: .infinity, alignment: .trailing)
-                    }
+                    Text(resetTime ?? " ")
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .trailing)
+                        .accessibilityHidden(resetTime == nil)
                 }
                 .padding(8)
                 .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
@@ -1686,68 +1668,6 @@ private struct ModernProgressBar: View {
         }
         .frame(height: height)
         .accessibilityHidden(true)
-    }
-}
-
-// MARK: Model Detail View (for submenu)
-
-private struct MenuModelDetailView: View {
-    let model: QuotaMetric
-    let settings: StatusBarMenuDisplaySettings
-
-    private var statusColor: Color {
-        menuStatusColor(remainingPercent: model.percentage, displayMode: settings.quotaDisplayMode)
-    }
-
-    var body: some View {
-        let displayMode = settings.quotaDisplayMode
-        let displayStyle = settings.quotaDisplayStyle
-        let displayPercent = menuDisplayPercent(remainingPercent: model.percentage, displayMode: displayMode)
-
-        HStack(spacing: 8) {
-            Text(model.displayName)
-                .font(.callout)
-                .foregroundStyle(.primary)
-                .lineLimit(1)
-
-            Spacer()
-
-            if let usage = model.formattedUsage {
-                Text(usage)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            if !model.isStandaloneMetric && displayStyle != .ring {
-                Text(displayPercent >= 0
-                    ? String(format: "%.0f%% %@", displayPercent, displayMode.suffixKey.localized())
-                    : "—")
-                    .font(.caption.weight(.semibold).monospacedDigit())
-                    .foregroundStyle(.primary)
-            }
-
-            if !model.isStandaloneMetric && model.formattedResetTime != "—" && !model.formattedResetTime.isEmpty {
-                Text(model.formattedResetTime)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.secondary)
-            }
-
-            if !model.isStandaloneMetric && displayStyle == .ring {
-                if RingProgressView.isUnknown(displayPercent) {
-                    // A 14pt ring has no room for a label, so replace it with the
-                    // same placeholder the other display styles render.
-                    Text("—")
-                        .font(.caption.weight(.semibold))
-                        .foregroundStyle(.secondary)
-                        .accessibilityLabel("usage.ring".localized())
-                        .accessibilityValue("quota.noDataYet".localized())
-                } else {
-                    RingProgressView(percent: displayPercent, size: 14, lineWidth: 2, tint: statusColor)
-                }
-            }
-        }
-        .padding(.horizontal, MenuItemMetrics.contentInset)
-        .padding(.vertical, 4)
     }
 }
 

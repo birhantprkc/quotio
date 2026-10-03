@@ -49,6 +49,13 @@ Spark Session and Spark Weekly. Missing windows are omitted; exhausted limits
 remain visible at 0%. Reset times appear below the progress bar so labels fit.
 Names and ordering come from the CLI/server host contract, not Swift-side bucket
 parsing. Other provider metrics keep their original names.
+Antigravity accounts show quota only in the card, without a detail submenu.
+If Antigravity omits a Session bucket while its matching Weekly quota is exhausted,
+the host supplies Session at 0%, including Claude Session for Claude Weekly.
+Existing Session data is preserved; inferred sessions have no reset time.
+Quota grid tiles reserve the reset row even when its timestamp is missing, invalid
+or expired, keeping their height uniform across providers, including Factory Droid.
+The empty row is hidden from accessibility; no reset time is invented.
 
 ## 🤖 Supported Ecosystem
 
