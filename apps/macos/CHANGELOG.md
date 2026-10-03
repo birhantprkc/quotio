@@ -11,23 +11,38 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- Manage provider accounts and their login sources from provider settings, including explicit access requests for native logins.
+- Guide first-time setup through provider connections, native login access, and quota display settings.
+- Manage provider accounts and their login sources from provider settings, including explicit access requests for native logins. Rename accounts, rescan native logins, and manage individual sources.
+- Pin accounts to the menu bar from their provider settings, with selection limits scoped to each provider.
+- Pair an iPhone companion from settings or the menu bar, review connected devices, and revoke device access. Share over the local network, Tailscale, or both at once.
+- Monitor quota for CLIProxyAPI accounts and supported provider API keys alongside native accounts.
 - Keep account names, source selection, quota status, and refresh settings in the bundled Quotio helper. The app displays the helper's resolved results.
 - Notarize local distribution builds with existing ASC authentication using `--notarization-provider asc`, without exporting a Keychain private key.
 
 ### Changed
 
+- Organize account settings by provider, with login sources grouped under each account. Keep unidentified sources separate from verified accounts.
 - Promote Accounts, iPhone Sharing, and CLIProxyAPI to the top of the sidebar; group application settings below them and separate About & Updates at the end.
+- Default quota displays to monochrome remaining quota. Keep used-quota and color display options available in settings.
+- Reveal blurred account names on demand and update app and provider icons.
 - Account and usage clients now use the version 2 host API. Older API routes and response formats are no longer supported.
-- Production app accounts and monitoring preferences are imported into the helper; the independent beta starts without importing production state. The previous operating mode selector and YubiKey credential writes have been removed.
+- Production app accounts and monitoring preferences are imported into the helper; the independent beta starts without importing production state.
 - The protected account store uses a newer format and cannot be opened by older Quotio CLI versions after migration.
 - Prereleases install as Quotio Beta alongside Quotio, with separate preferences, Keychain services, account vault, proxy files, and default port. Beta updates use manual downloads and never modify the stable Sparkle feed.
+
+### Removed
+
+- Remove PostHog telemetry and its privacy settings.
+- Remove the previous operating mode selector and YubiKey credential writes.
 
 ### Fixed
 
 - Restore cached quota after restart, keep healthy accounts visible when another source fails, and preserve disabled native sources across scans.
-- Improve account names and quota details for Codex, Copilot, Devin, Factory, Antigravity, Amp, and Grok.
+- Improve account names and quota details for Codex, Copilot, Devin, Factory, Antigravity, Amp, and Grok. Preserve provider plan names across locale changes and keep extra usage separate from primary quota.
 - Only merge native and registered account sources when both carry the same verified provider subject and tenant; matching local IDs alone no longer attach another source's quota.
+- Refresh quota after account changes, honor disabled accounts and providers, and retain unaffected quotas during scoped refreshes.
+- Truncate displayed quota percentages consistently.
+- Restore CLIProxyAPI lifecycle controls and fall back to release pages when GitHub rate limits proxy downloads.
 - Build the beta app and bundled helper for both Apple Silicon and Intel, and create DMGs without Finder automation.
 - Sign the bundled helper and nested code before the main app during Developer ID packaging.
 
