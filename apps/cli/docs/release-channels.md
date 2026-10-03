@@ -91,6 +91,13 @@ integrity matches exactly.
    GitHub's latest release, publishes the verified npm tarball, then updates the
    existing tap using its repository-scoped SSH deploy key.
 
+To publish npm without changing the Homebrew tap, run **Publish package channels** with the prepared `cli-v*` tag and `publish_homebrew=false`. Manual dispatch verifies and publishes the npm tarball first, then publishes the GitHub draft using the workflow token. This does not trigger a second release-event workflow. The npm prerelease channel remains `next`; `latest` is unchanged.
+
+```sh
+gh workflow run cli-publish-release.yml --ref master \
+  -f tag=cli-v1.0.0-beta.1 -f publish_homebrew=false
+```
+
 | Version | npm tag | Homebrew formula |
 | --- | --- | --- |
 | `0.1.0` | `latest` | `quotio` |

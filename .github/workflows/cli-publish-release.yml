@@ -9,6 +9,10 @@ on:
         description: Existing cli-v* release tag to publish
         required: true
         type: string
+      publish_homebrew:
+        description: Update Homebrew after publishing npm
+        type: boolean
+        default: true
 
 permissions: {}
 concurrency:
@@ -72,9 +76,23 @@ jobs:
           else
             npm publish "quotio-$version.tgz" --access public --tag "$channel" --provenance
           fi
+  publish-github:
+    name: Publish verified CLI release
+    if: github.event_name == 'workflow_dispatch'
+    needs: npm
+    runs-on: ubuntu-24.04
+    timeout-minutes: 5
+    permissions:
+      contents: write
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: ${{ inputs.tag }}
+    steps:
+      - name: Publish prepared draft after npm succeeds
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
   homebrew:
     name: Update Homebrew tap
-    if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'cli-v')
+    if: (github.event_name == 'workflow_dispatch' && inputs.publish_homebrew) || startsWith(github.event.release.tag_name, 'cli-v')
     needs: npm
     runs-on: ubuntu-24.04
     environment: release
