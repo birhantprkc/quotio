@@ -1,6 +1,12 @@
 import Foundation
 
+public enum ApplicationUpdatePolicy: Equatable, Sendable {
+    case sparkle
+    case manualDownload
+}
+
 public struct ApplicationUpdateSnapshot: Equatable, Sendable {
+    public var policy: ApplicationUpdatePolicy
     public var isInitialized: Bool
     public var isChecking: Bool
     public var canCheck: Bool
@@ -12,13 +18,15 @@ public struct ApplicationUpdateSnapshot: Equatable, Sendable {
         isChecking: Bool = false,
         canCheck: Bool = false,
         lastCheckDate: Date? = nil,
-        channel: UpdateChannel = .stable
+        channel: UpdateChannel = .stable,
+        policy: ApplicationUpdatePolicy = .sparkle
     ) {
         self.isInitialized = isInitialized
         self.isChecking = isChecking
         self.canCheck = canCheck
         self.lastCheckDate = lastCheckDate
         self.channel = channel
+        self.policy = policy
     }
 }
 

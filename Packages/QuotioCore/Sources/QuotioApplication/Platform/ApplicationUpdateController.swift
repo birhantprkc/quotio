@@ -30,7 +30,8 @@ public final class ApplicationUpdateController: ApplicationUpdateControlling {
             isChecking: checker.isChecking,
             canCheck: checker.canCheck,
             lastCheckDate: checker.lastCheckDate,
-            channel: channel
+            channel: channel,
+            policy: checker.policy
         )
     }
 
@@ -55,6 +56,7 @@ public final class ApplicationUpdateController: ApplicationUpdateControlling {
     }
 
     public func setChannel(_ channel: UpdateChannel) {
+        guard checker.policy == .sparkle else { return }
         guard self.channel != channel else { return }
         self.channel = channel
         preferencesRepository.save(UpdatePreferences(channel: channel))

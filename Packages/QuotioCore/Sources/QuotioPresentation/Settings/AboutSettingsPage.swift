@@ -17,22 +17,31 @@ struct AboutSettingsPage: View {
                 HStack(spacing: 16) {
                     Image("AppIconImage").resizable().frame(width: 52, height: 52)
                     VStack(alignment: .leading) {
-                        Text("Quotio").font(.title2.weight(.semibold))
+                        Text(Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+                             ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String ?? "Quotio")
+                            .font(.title2.weight(.semibold))
                         Button(version) { pasteboard.copy(version) }.buttonStyle(.plain)
                             .help("settings.copyVersion".localized())
                     }
                 }
-                Button("action.checkUpdates".localized()) { update.checkForUpdates() }
-                    .disabled(!update.snapshot.canCheck || update.snapshot.isChecking)
-                Toggle("settings.autoCheckUpdates".localized(), isOn: Binding(
-                    get: { settings.appShellPreferences.autoCheckUpdates }, set: { settings.setAutomaticUpdateChecks($0) }
-                ))
-                Toggle("settings.betaUpdates".localized(), isOn: Binding(
-                    get: { update.snapshot.channel == .beta }, set: { update.setChannel($0 ? .beta : .stable) }
-                ))
-                if let date = update.snapshot.lastCheckDate {
-                    LabeledContent("settings.lastChecked".localized()) {
-                        Text(date, format: .dateTime.year().month().day().hour().minute())
+                if update.snapshot.policy == .manualDownload {
+                    Text("settings.manualAppUpdates".localized())
+                        .foregroundStyle(.secondary)
+                    Link("settings.downloadAppUpdates".localized(),
+                         destination: URL(string: "https://github.com/nguyenphutrong/quotio/releases")!)
+                } else {
+                    Button("action.checkUpdates".localized()) { update.checkForUpdates() }
+                        .disabled(!update.snapshot.canCheck || update.snapshot.isChecking)
+                    Toggle("settings.autoCheckUpdates".localized(), isOn: Binding(
+                        get: { settings.appShellPreferences.autoCheckUpdates }, set: { settings.setAutomaticUpdateChecks($0) }
+                    ))
+                    Toggle("settings.betaUpdates".localized(), isOn: Binding(
+                        get: { update.snapshot.channel == .beta }, set: { update.setChannel($0 ? .beta : .stable) }
+                    ))
+                    if let date = update.snapshot.lastCheckDate {
+                        LabeledContent("settings.lastChecked".localized()) {
+                            Text(date, format: .dateTime.year().month().day().hour().minute())
+                        }
                     }
                 }
             }

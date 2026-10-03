@@ -3,6 +3,7 @@ import QuotioDomain
 
 @MainActor
 public protocol ApplicationUpdateChecking: AnyObject, Sendable {
+    var policy: ApplicationUpdatePolicy { get }
     var isInitialized: Bool { get }
     var isChecking: Bool { get }
     var canCheck: Bool { get }
@@ -15,6 +16,10 @@ public protocol ApplicationUpdateChecking: AnyObject, Sendable {
     func checkForUpdatesInBackground()
     func resetUpdateCycle()
     func setDidChangeHandler(_ handler: (@MainActor () -> Void)?)
+}
+
+public extension ApplicationUpdateChecking {
+    var policy: ApplicationUpdatePolicy { .sparkle }
 }
 
 @MainActor

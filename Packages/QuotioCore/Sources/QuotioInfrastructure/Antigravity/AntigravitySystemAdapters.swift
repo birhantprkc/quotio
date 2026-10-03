@@ -129,10 +129,12 @@ actor AntigravitySwitchDatabase {
         result == SQLITE_BUSY || result == SQLITE_LOCKED
     }
 
-    init() {
-        databaseURL = FileManager.default.homeDirectoryForCurrentUser
+    init(identity: RuntimeIdentity = .production, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+        databaseURL = home
             .appendingPathComponent("Library/Application Support/Antigravity/User/globalStorage/state.vscdb")
-        backupURL = databaseURL.appendingPathExtension("quotio.backup")
+        backupURL = identity.isProduction ? databaseURL.appendingPathExtension("quotio.backup")
+            : identity.applicationSupportDirectory(in: home.appendingPathComponent("Library/Application Support"))
+                .appendingPathComponent("Antigravity/state.vscdb.backup")
     }
 
     func exists() -> Bool { FileManager.default.fileExists(atPath: databaseURL.path) }
@@ -157,6 +159,7 @@ actor AntigravitySwitchDatabase {
 
     func createBackup() throws {
         guard exists() else { throw CocoaError(.fileNoSuchFile) }
+        try FileManager.default.createDirectory(at: backupURL.deletingLastPathComponent(), withIntermediateDirectories: true)
         try? FileManager.default.removeItem(at: backupURL)
         try FileManager.default.copyItem(at: databaseURL, to: backupURL)
     }

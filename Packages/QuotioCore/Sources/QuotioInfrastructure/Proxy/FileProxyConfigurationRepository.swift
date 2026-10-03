@@ -14,19 +14,23 @@ public actor FileProxyConfigurationRepository: ProxyConfigurationRepository {
         self.fileManager = fileManager
     }
 
-    public static func defaultPaths(fileManager: FileManager = .default) -> ProxyPaths {
+    public static func defaultPaths(
+        identity: RuntimeIdentity = .production,
+        fileManager: FileManager = .default
+    ) -> ProxyPaths {
         let appSupport = fileManager.urls(
             for: .applicationSupportDirectory,
             in: .userDomainMask
         ).first ?? fileManager.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/Application Support")
-        let quotioDirectory = appSupport.appendingPathComponent("Quotio")
+        let quotioDirectory = identity.applicationSupportDirectory(in: appSupport)
         let proxyDirectory = quotioDirectory.appendingPathComponent("proxy/upstream/current")
         return ProxyPaths(
             legacyBinaryPath: quotioDirectory.appendingPathComponent("CLIProxyAPI").path,
             configPath: quotioDirectory.appendingPathComponent("config.yaml").path,
-            authDirectoryPath: fileManager.homeDirectoryForCurrentUser
-                .appendingPathComponent(".cli-proxy-api").path,
+            authDirectoryPath: identity.proxyAuthDirectory(
+                home: fileManager.homeDirectoryForCurrentUser, applicationSupport: appSupport
+            ).path,
             expectedBinaryPath: proxyDirectory.appendingPathComponent("CLIProxyAPI").path
         )
     }

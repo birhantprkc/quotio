@@ -24,8 +24,11 @@ public actor ProxyProcessController: ProxyProcessControlling {
     }
 
     private var processes: [ProxyRunID: ManagedProcess] = [:]
+    private let allowsPortCleanup: Bool
 
-    public init() {}
+    public init(allowsPortCleanup: Bool = true) {
+        self.allowsPortCleanup = allowsPortCleanup
+    }
 
     public static func launchArguments(for request: ProxyProcessRequest) -> [String] {
         ["-config", request.configurationPath]
@@ -103,10 +106,11 @@ public actor ProxyProcessController: ProxyProcessControlling {
         if let runID, let managed = processes.removeValue(forKey: runID) {
             await terminate(managed)
         }
-        await Self.killProcesses(on: port)
+        if allowsPortCleanup { await Self.killProcesses(on: port) }
     }
 
     public func cleanupProcesses(on port: UInt16) async {
+        guard allowsPortCleanup else { return }
         await Self.killProcesses(on: port)
         try? await Task.sleep(for: .milliseconds(200))
     }

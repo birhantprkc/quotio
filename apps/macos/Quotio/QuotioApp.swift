@@ -20,7 +20,7 @@ struct QuotioApp: App {
     private var languageManager: LanguageManager { runtime.languageManager }
 
     var body: some Scene {
-        Window("Quotio", id: "main") {
+        Window(AppIdentity.displayName, id: "main") {
             if AppEnvironment.isRunningUnitTests {
                 EmptyView()
             } else {

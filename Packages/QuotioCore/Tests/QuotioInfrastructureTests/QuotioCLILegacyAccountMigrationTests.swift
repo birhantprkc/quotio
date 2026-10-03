@@ -6,6 +6,31 @@ import XCTest
 @testable import QuotioInfrastructure
 
 final class QuotioCLILegacyAccountMigrationTests: XCTestCase {
+    func testNonproductionMigrationDoesNotReadLegacyMetadataOrNativeKeychain() async throws {
+        let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
+        try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let url = directory.appendingPathComponent("accounts-v1.json")
+        try Data("unreadable-production-metadata".utf8).write(to: url)
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        let source = CodexMigrationKeychain()
+        for identifier in ["app.bytrong.quotio.beta", "app.bytrong.quotio.dev"] {
+            let migration = QuotioCLILegacyAccountMigration(
+                metadataURL: url, credentials: MigrationCredentials(), defaults: try XCTUnwrap(UserDefaults(suiteName: suite)),
+                codexKeychain: source, identity: RuntimeIdentity(bundleIdentifier: identifier),
+                importAccount: { _, _, _ in XCTFail("Nonproduction must not import production accounts") }
+            )
+            let result = await migration.migrate()
+            XCTAssertEqual(result, CredentialMigrationResult())
+        }
+        let reads = await source.readCount
+        XCTAssertEqual(reads, 0)
+        XCTAssertNil(defaults.array(forKey: "quotio.cli.migratedMonitorAccounts.v1"))
+        XCTAssertEqual(try String(contentsOf: url, encoding: .utf8), "unreadable-production-metadata")
+    }
+
     func testMigrationRetainsSourceAndRetriesOnlyUncommittedAccounts() async throws {
         let directory = FileManager.default.temporaryDirectory.appendingPathComponent(UUID().uuidString)
         try FileManager.default.createDirectory(at: directory, withIntermediateDirectories: true)

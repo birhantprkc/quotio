@@ -11,6 +11,7 @@ public actor QuotioCLILegacyAccountMigration {
     private let credentials: any CredentialDataStoring
     private let defaults: UserDefaults
     private let codexKeychain: (any ExternalCredentialReading)?
+    private let identity: RuntimeIdentity
     private let importAccount: @Sendable (Account, StoredCredential, Bool) async throws -> Void
     private let completedKey = "quotio.cli.migratedMonitorAccounts.v1"
 
@@ -19,6 +20,7 @@ public actor QuotioCLILegacyAccountMigration {
         credentials: any CredentialDataStoring,
         defaults: UserDefaults = .standard,
         codexKeychain: (any ExternalCredentialReading)? = nil,
+        identity: RuntimeIdentity = .production,
         importAccount: @escaping @Sendable (Account, StoredCredential, Bool) async throws -> Void
     ) {
         self.metadataURL = metadataURL ?? FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -26,10 +28,12 @@ public actor QuotioCLILegacyAccountMigration {
         self.credentials = credentials
         self.defaults = defaults
         self.codexKeychain = codexKeychain
+        self.identity = identity
         self.importAccount = importAccount
     }
 
     public func migrate() async -> CredentialMigrationResult {
+        guard identity.allowsLegacyAccountMigration else { return CredentialMigrationResult() }
         let metadata: Metadata
         do {
             let attributes = try metadataURL.resourceValues(forKeys: [.isRegularFileKey, .isSymbolicLinkKey, .fileSizeKey])

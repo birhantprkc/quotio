@@ -2,8 +2,7 @@ import XCTest
 @testable import Quotio
 
 final class AppIdentityTests: XCTestCase {
-    func testProductionBundleIdentifierUsesByTrongDomain() {
-        XCTAssertEqual(AppIdentity.productionBundleIdentifier, "app.bytrong.quotio")
+    func testVaultNamespacesKeepNonproductionCredentialsSeparate() {
         XCTAssertEqual(
             AppIdentity.quotioCLIVaultNamespace(for: AppIdentity.productionBundleIdentifier),
             "quotio-macos"
@@ -12,6 +11,20 @@ final class AppIdentityTests: XCTestCase {
         XCTAssertNotEqual(development, "quotio-macos")
         XCTAssertLessThanOrEqual(development.count, 32)
         XCTAssertTrue(development.allSatisfy { $0.isLowercase || $0.isNumber || $0 == "-" })
+    }
+
+    func testBetaDoesNotMigrateLegacyDefaults() throws {
+        let suite = UUID().uuidString
+        let defaults = try XCTUnwrap(UserDefaults(suiteName: suite))
+        defer { defaults.removePersistentDomain(forName: suite) }
+        defaults.set("sentinel", forKey: "existing")
+        let betaDomainBefore = defaults.persistentDomain(forName: "app.bytrong.quotio.beta") ?? [:]
+        XCTAssertFalse(AppIdentity.migrateLegacyUserDefaults(
+            defaults: defaults, currentBundleIdentifier: "app.bytrong.quotio.beta"
+        ))
+        XCTAssertEqual(defaults.string(forKey: "existing"), "sentinel")
+        let betaDomainAfter = defaults.persistentDomain(forName: "app.bytrong.quotio.beta") ?? [:]
+        XCTAssertEqual(betaDomainBefore as NSDictionary, betaDomainAfter as NSDictionary)
     }
 
     func testApplicationBundleContainsExecutableQuotioCLIHelper() {

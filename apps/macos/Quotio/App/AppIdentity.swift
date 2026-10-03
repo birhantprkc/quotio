@@ -5,9 +5,10 @@
 
 import Foundation
 import CryptoKit
+import QuotioDomain
 
 nonisolated enum AppIdentity {
-    static let productionBundleIdentifier = "app.bytrong.quotio"
+    static let productionBundleIdentifier = RuntimeIdentity.productionBundleIdentifier
     static let legacyBundleIdentifiers = [
         "dev.quotio.desktop",
         "proseek.io.vn.Quotio",
@@ -21,6 +22,16 @@ nonisolated enum AppIdentity {
 
     static var isProduction: Bool {
         bundleIdentifier == productionBundleIdentifier
+    }
+
+    static var runtimeIdentity: RuntimeIdentity {
+        RuntimeIdentity(bundleIdentifier: bundleIdentifier)
+    }
+
+    static var displayName: String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleDisplayName") as? String
+            ?? Bundle.main.object(forInfoDictionaryKey: "CFBundleName") as? String
+            ?? "Quotio"
     }
 
     static func keychainService(suffix: String) -> String {

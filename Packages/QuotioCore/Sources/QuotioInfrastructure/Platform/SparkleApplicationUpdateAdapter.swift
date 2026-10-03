@@ -1,10 +1,12 @@
 import Foundation
 import QuotioApplication
+import QuotioDomain
 import Sparkle
 
 @MainActor
 public final class SparkleApplicationUpdateAdapter: NSObject, ApplicationUpdateChecking {
     private let feedURL: String
+    public let policy: ApplicationUpdatePolicy
     private var updaterController: SPUStandardUpdaterController?
     private var updater: SPUUpdater? { updaterController?.updater }
     private var didChangeHandler: (@MainActor () -> Void)?
@@ -15,9 +17,11 @@ public final class SparkleApplicationUpdateAdapter: NSObject, ApplicationUpdateC
     public private(set) var isChecking = false
 
     public init(
-        feedURL: String = "https://github.com/nguyenphutrong/quotio/releases/latest/download/appcast.xml"
+        feedURL: String = "https://github.com/nguyenphutrong/quotio/releases/latest/download/appcast.xml",
+        policy: ApplicationUpdatePolicy = .sparkle
     ) {
         self.feedURL = feedURL
+        self.policy = policy
         super.init()
     }
 
@@ -30,18 +34,19 @@ public final class SparkleApplicationUpdateAdapter: NSObject, ApplicationUpdateC
     }
 
     public var automaticallyChecksForUpdates: Bool {
-        get { updater?.automaticallyChecksForUpdates ?? true }
-        set { updater?.automaticallyChecksForUpdates = newValue }
+        get { policy == .sparkle && (updater?.automaticallyChecksForUpdates ?? true) }
+        set { if policy == .sparkle { updater?.automaticallyChecksForUpdates = newValue } }
     }
 
     public func setAllowsPrereleaseUpdates(_ allowed: Bool) {
+        guard policy == .sparkle else { return }
         channelLock.withLock {
             allowsPrereleaseUpdates = allowed
         }
     }
 
     public func initializeIfNeeded() {
-        guard !isInitialized else { return }
+        guard policy == .sparkle, !isInitialized else { return }
         updaterController = SPUStandardUpdaterController(
             startingUpdater: true,
             updaterDelegate: self,

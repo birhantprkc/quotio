@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Promote Accounts, iPhone Sharing, and CLIProxyAPI to the top of the sidebar; group application settings below them and separate About & Updates at the end.
 - Account and usage clients now use the version 2 host API. Older API routes and response formats are no longer supported.
-- Existing app accounts and monitoring preferences are imported into the helper. The previous operating mode selector and YubiKey credential writes have been removed.
+- Production app accounts and monitoring preferences are imported into the helper; the independent beta starts without importing production state. The previous operating mode selector and YubiKey credential writes have been removed.
 - The protected account store uses a newer format and cannot be opened by older Quotio CLI versions after migration.
 
 ### Fixed

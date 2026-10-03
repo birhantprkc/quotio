@@ -11,18 +11,16 @@ public actor FileProxyVersionRepository: ProxyVersionRepository {
 
     public init(
         proxyDirectory: URL? = nil,
-        fileManager: FileManager = .default
+        fileManager: FileManager = .default,
+        identity: RuntimeIdentity = .production
     ) {
         self.fileManager = fileManager
         if let proxyDirectory {
             self.proxyDirectory = proxyDirectory
         } else {
-            let appSupport = fileManager.urls(
-                for: .applicationSupportDirectory,
-                in: .userDomainMask
-            ).first ?? fileManager.homeDirectoryForCurrentUser
-                .appendingPathComponent("Library/Application Support")
-            self.proxyDirectory = appSupport.appendingPathComponent("Quotio/proxy")
+            let paths = FileProxyConfigurationRepository.defaultPaths(identity: identity, fileManager: fileManager)
+            self.proxyDirectory = URL(fileURLWithPath: paths.configPath)
+                .deletingLastPathComponent().appendingPathComponent("proxy", isDirectory: true)
         }
         try? fileManager.createDirectory(
             at: self.proxyDirectory,

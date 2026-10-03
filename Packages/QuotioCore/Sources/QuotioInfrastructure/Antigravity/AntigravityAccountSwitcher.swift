@@ -5,8 +5,13 @@ import QuotioDomain
 import SQLite3
 
 public enum AntigravityAccountSwitcherFactory {
-    public static func make(logger: any ApplicationLogging) -> any AntigravityAccountSwitching {
-        AntigravityAccountSwitcher(logger: logger)
+    public static func make(
+        logger: any ApplicationLogging,
+        identity: RuntimeIdentity = RuntimeIdentity(
+            bundleIdentifier: Bundle.main.bundleIdentifier ?? RuntimeIdentity.productionBundleIdentifier
+        )
+    ) -> any AntigravityAccountSwitching {
+        AntigravityAccountSwitcher(logger: logger, identity: identity)
     }
 }
 
@@ -47,10 +52,11 @@ actor AntigravityAccountSwitcher: AntigravityAccountSwitching {
     init(
         logger: any ApplicationLogging,
         now: @escaping @Sendable () -> Date = Date.init,
-        machineIdentitySync: (@Sendable (String) async throws -> Void)? = nil
+        machineIdentitySync: (@Sendable (String) async throws -> Void)? = nil,
+        identity: RuntimeIdentity = .production
     ) {
-        let database = AntigravitySwitchDatabase()
-        let devices = AntigravityDeviceStore()
+        let database = AntigravitySwitchDatabase(identity: identity)
+        let devices = AntigravityDeviceStore(identity: identity)
         self.database = database
         self.logger = logger
         self.machineIdentitySync = machineIdentitySync ?? { email in
@@ -305,12 +311,17 @@ actor AntigravityAccountSwitcher: AntigravityAccountSwitching {
     }
 }
 
-private actor AntigravityDeviceStore {
+actor AntigravityDeviceStore {
     private let files = FileManager.default
-    private let profileDirectory = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".quotio/antigravity-profiles")
-    private let storageURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent("Library/Application Support/Antigravity/User/globalStorage/storage.json")
+    private let profileDirectory: URL
+    private let storageURL: URL
+
+    init(identity: RuntimeIdentity = .production, home: URL = FileManager.default.homeDirectoryForCurrentUser) {
+        storageURL = home.appendingPathComponent("Library/Application Support/Antigravity/User/globalStorage/storage.json")
+        profileDirectory = identity.antigravityProfileDirectory(
+            home: home, applicationSupport: home.appendingPathComponent("Library/Application Support")
+        )
+    }
 
     func loadOrCreate(email: String) -> AntigravityDeviceProfile {
         let url = profileURL(email: email)

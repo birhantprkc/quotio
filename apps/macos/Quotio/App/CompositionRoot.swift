@@ -18,6 +18,8 @@ enum CompositionRoot {
             AppIdentity.migrateLegacyUserDefaults()
         }
 
+        let identity = AppIdentity.runtimeIdentity
+        let runtimeMetadata = UserDefaultsProxyRuntimeMetadataRepository(identity: identity)
         let customProviderRepository = UserDefaultsCustomProviderRepository()
         let customProviderTransport = URLSessionCustomProviderTransport()
         let customProviderService = QuotioApplication.CustomProviderService(
@@ -40,19 +42,19 @@ enum CompositionRoot {
                 languageManager.localized(key)
             }
         )
-        let paths = FileProxyConfigurationRepository.defaultPaths()
+        let paths = FileProxyConfigurationRepository.defaultPaths(identity: identity)
         let configurationRepository = FileProxyConfigurationRepository(paths: paths)
         let proxyController = ProxyLifecycleController(
             paths: paths,
-            processController: ProxyProcessController(),
-            versionRepository: FileProxyVersionRepository(),
+            processController: ProxyProcessController(allowsPortCleanup: identity.isProduction),
+            versionRepository: FileProxyVersionRepository(identity: identity),
             releaseRepository: GitHubProxyReleaseRepository(),
             updateFeed: GitHubAtomProxyUpdateFeed(),
             configurationRepository: configurationRepository,
             binaryDownloader: URLSessionProxyBinaryDownloader(),
             checksumVerifier: SHA256ProxyChecksumVerifier(),
             managementChecker: LocalProxyManagementClient(),
-            metadataRepository: UserDefaultsProxyRuntimeMetadataRepository(),
+            metadataRepository: runtimeMetadata,
             preferencesRepository: UserDefaultsProxyPreferencesRepository(),
             keyVault: ProxyManagementKeyVaultAdapter(
                 dataStore: KeychainCredentialDataStore(
@@ -74,7 +76,7 @@ enum CompositionRoot {
             controller: proxyController,
             initialState: ProxySnapshot(
                 status: ProxyStatus(
-                    port: UserDefaultsProxyRuntimeMetadataRepository().loadPort()
+                    port: runtimeMetadata.loadPort()
                 ),
                 paths: paths
             )
@@ -148,7 +150,7 @@ enum CompositionRoot {
 
         let updatePreferences = UserDefaultsUpdatePreferencesRepository()
         let applicationUpdateController = ApplicationUpdateController(
-            checker: SparkleApplicationUpdateAdapter(),
+            checker: SparkleApplicationUpdateAdapter(policy: identity.applicationUpdatePolicy),
             preferencesRepository: updatePreferences,
             icon: AppKitUpdaterIconAdapter()
         )
@@ -166,6 +168,7 @@ enum CompositionRoot {
                 legacyProtectedStore: legacyYubiKey
             ),
             codexKeychain: ExternalKeychainCredentialReader(),
+            identity: identity,
             importAccount: { account, credential, disabled in
                 try await quotioBackend.importLegacyAccount(account, credential: credential, disabled: disabled)
             }
