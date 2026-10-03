@@ -287,6 +287,38 @@ fn observation(
         .unwrap_or(report.generated_at);
     let expires = fetched.checked_add(ttl);
     let stale = failure.is_some() || now < fetched || expires.is_none_or(|at| now >= at);
+    let mut metrics: Vec<Metric> = value
+        .windows
+        .iter()
+        .map(|window| {
+            let group = metric_group(&value.provider.0, window);
+            Metric {
+                id: metric_id(window),
+                group: group.map(|(group, _)| group.into()),
+                display_name: group.map_or_else(
+                    || metric_display_name(&value.provider.0, &window.label).into(),
+                    |(_, name)| name.into(),
+                ),
+                note: window.note.clone(),
+                quota: window.quota.clone(),
+                amounts: window.amounts.clone(),
+                consumption: window.consumption.clone(),
+                resets_at: window.resets_at,
+                reset_description: window.reset_description.clone(),
+                fetched_at: window.fetched_at,
+                provenance: window.provenance.clone(),
+            }
+        })
+        .collect();
+    if matches!(value.provider.0.as_str(), "antigravity" | "codex") {
+        metrics.sort_by_key(|metric| match metric.display_name.as_str() {
+            "Session" => 0,
+            "Weekly" => 1,
+            "Claude Session" | "Spark Session" => 2,
+            "Claude Weekly" | "Spark Weekly" => 3,
+            _ => 4,
+        });
+    }
     Usage {
         account_id: account_id.into(),
         freshness: if stale {
@@ -310,27 +342,49 @@ fn observation(
         codex_profile: value.codex_profile.clone(),
         codex_reset_credits: value.codex_reset_credits.clone().filter(|_| !stale),
         summary: Some(super::summary::project(value)),
-        metrics: value
-            .windows
-            .iter()
-            .map(|window| Metric {
-                id: metric_id(window),
-                group: metric_group(&value.provider.0, window).map(|(group, _)| group.into()),
-                display_name: metric_group(&value.provider.0, window)
-                    .map_or_else(|| window.label.clone(), |(_, name)| name.into()),
-                note: window.note.clone(),
-                quota: window.quota.clone(),
-                amounts: window.amounts.clone(),
-                consumption: window.consumption.clone(),
-                resets_at: window.resets_at,
-                reset_description: window.reset_description.clone(),
-                fetched_at: window.fetched_at,
-                provenance: window.provenance.clone(),
-            })
-            .collect(),
+        metrics,
         issue: failure
             .or_else(|| value.diagnostics.first().map(|diagnostic| diagnostic.code))
             .map(issue),
+    }
+}
+
+fn metric_display_name<'a>(provider: &str, label: &'a str) -> &'a str {
+    match provider {
+        "antigravity" => {
+            let bucket = label.rsplit_once(' ').map_or(label, |(_, bucket)| bucket);
+            match bucket {
+                "gemini-5h" | "gemini-session" => "Session",
+                "gemini-weekly" => "Weekly",
+                "3p-5h" | "3p-session" => "Claude Session",
+                "3p-weekly" => "Claude Weekly",
+                _ if bucket.eq_ignore_ascii_case("session") => {
+                    if label.starts_with("Claude") {
+                        "Claude Session"
+                    } else if label.starts_with("Gemini") {
+                        "Session"
+                    } else {
+                        label
+                    }
+                }
+                _ if bucket.eq_ignore_ascii_case("weekly") => {
+                    if label.starts_with("Claude") {
+                        "Claude Weekly"
+                    } else if label.starts_with("Gemini") {
+                        "Weekly"
+                    } else {
+                        label
+                    }
+                }
+                _ => label,
+            }
+        }
+        "codex" => match label {
+            "Codex Spark Session" => "Spark Session",
+            "Codex Spark Weekly" => "Spark Weekly",
+            _ => label,
+        },
+        _ => label,
     }
 }
 
@@ -525,6 +579,108 @@ pub fn digest(snapshot: &Snapshot) -> Result<String, crate::accounts::AccountErr
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn quota_labels_are_projected_in_period_order_without_changing_observations() {
+        let fixture: serde_json::Value =
+            serde_json::from_str(include_str!("../../tests/fixtures/contracts/usage-v1.json"))
+                .unwrap();
+        let report = UsageReport {
+            schema_version: 1,
+            generated_at: OffsetDateTime::UNIX_EPOCH,
+            providers: vec![serde_json::from_value(fixture["providers"][0].clone()).unwrap()],
+            failures: vec![],
+        };
+        for (provider, labels, expected) in [
+            (
+                "antigravity",
+                vec![
+                    "Claude and GPT models 3p-weekly",
+                    "Gemini Models gemini-weekly",
+                    "Gemini Models gemini-5h",
+                ],
+                vec!["Session", "Weekly", "Claude Weekly"],
+            ),
+            (
+                "antigravity",
+                vec!["3p-session", "gemini-weekly", "gemini-session", "3p-weekly"],
+                vec!["Session", "Weekly", "Claude Session", "Claude Weekly"],
+            ),
+            (
+                "codex",
+                vec!["Codex Spark Weekly", "Weekly", "Codex Spark Session"],
+                vec!["Weekly", "Spark Session", "Spark Weekly"],
+            ),
+        ] {
+            let mut value = report.providers[0].clone();
+            value.provider.0 = provider.into();
+            let original = value.windows[0].clone();
+            value.windows = labels
+                .iter()
+                .map(|label| {
+                    let mut window = original.clone();
+                    window.label = (*label).into();
+                    window.quota =
+                        crate::domain::Quota::from_remaining(Some(if label.contains("3p") {
+                            0.0
+                        } else {
+                            99.0
+                        }));
+                    window
+                })
+                .collect();
+            let usage = observation(
+                "account",
+                &value,
+                &report,
+                report.generated_at,
+                time::Duration::hours(1),
+                None,
+            );
+            assert_eq!(
+                usage
+                    .metrics
+                    .iter()
+                    .map(|metric| metric.display_name.as_str())
+                    .collect::<Vec<_>>(),
+                expected
+            );
+            for metric in &usage.metrics {
+                let window = value
+                    .windows
+                    .iter()
+                    .find(|window| metric_id(window) == metric.id)
+                    .unwrap();
+                assert_eq!(metric.quota, window.quota);
+                assert_eq!(metric.resets_at, window.resets_at);
+                assert_eq!(metric.provenance.source, window.provenance.source);
+            }
+            value.windows = vec![original.clone()];
+            value.windows[0].label = "Future window".into();
+            let usage = observation(
+                "account",
+                &value,
+                &report,
+                report.generated_at,
+                time::Duration::hours(1),
+                None,
+            );
+            assert_eq!(usage.metrics[0].display_name, "Future window");
+            value.windows.clear();
+            assert!(
+                observation(
+                    "account",
+                    &value,
+                    &report,
+                    report.generated_at,
+                    time::Duration::hours(1),
+                    None
+                )
+                .metrics
+                .is_empty()
+            );
+        }
+    }
+
     #[test]
     fn factory_limits_have_host_groups_and_short_period_names() {
         let report: serde_json::Value =

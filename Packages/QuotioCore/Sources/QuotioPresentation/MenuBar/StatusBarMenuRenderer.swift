@@ -255,12 +255,9 @@ final class StatusBarMenuRenderer {
             ? "privacy.accountHidden".localized()
             : account.email
 
-        let isAntigravitySummary = provider == .antigravity
-            && account.quota.models.contains { $0.name.hasPrefix("antigravity-") }
-
         if provider == .codex, let analytics = account.quota.analytics, !analytics.isEmpty {
             item.submenu = buildCodexAnalyticsSubmenu(analytics: analytics)
-        } else if provider == .antigravity && !account.quota.models.isEmpty && !isAntigravitySummary {
+        } else if provider == .antigravity && !account.quota.models.isEmpty {
             item.submenu = buildAntigravitySubmenu(data: account.quota)
         }
 
@@ -294,16 +291,11 @@ final class StatusBarMenuRenderer {
     private func buildAntigravitySubmenu(data: ProviderQuota) -> NSMenu {
         let submenu = makeMenu()
 
-        let hasSummary = data.models.contains { $0.name.hasPrefix("antigravity-") }
-        let allModels = hasSummary ? data.models : data.models.sorted { $0.name < $1.name }
-
-        for model in allModels {
-            let isSummary = model.name.hasPrefix("antigravity-")
+        for model in data.models {
             let modelItem = viewItem(for: MenuModelDetailView(
                 model: model,
-                showRawName: !isSummary,
                 settings: snapshot.displaySettings
-            ), title: isSummary ? model.displayName : model.name)
+            ), title: model.displayName)
             submenu.addItem(modelItem)
         }
 
@@ -1641,11 +1633,6 @@ private struct CardGridLayout: View {
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
                         Spacer(minLength: 2)
-                        if let resetTime = model.formattedResetTime {
-                            Text(resetTime)
-                                .monospacedDigit()
-                                .foregroundStyle(.secondary)
-                        }
                         Text(model.usage ?? menuPercentText(remainingPercent: model.percentage, displayMode: displayMode))
                             .fontWeight(.semibold)
                             .monospacedDigit()
@@ -1659,6 +1646,12 @@ private struct CardGridLayout: View {
                             height: 4,
                             displayMode: displayMode
                         )
+                    }
+                    if let resetTime = model.formattedResetTime {
+                        Text(resetTime)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .trailing)
                     }
                 }
                 .padding(8)
@@ -1700,7 +1693,6 @@ private struct ModernProgressBar: View {
 
 private struct MenuModelDetailView: View {
     let model: QuotaMetric
-    let showRawName: Bool
     let settings: StatusBarMenuDisplaySettings
 
     private var statusColor: Color {
@@ -1713,8 +1705,8 @@ private struct MenuModelDetailView: View {
         let displayPercent = menuDisplayPercent(remainingPercent: model.percentage, displayMode: displayMode)
 
         HStack(spacing: 8) {
-            Text(showRawName ? model.name : model.displayName)
-                .font(showRawName ? .callout.monospaced() : .callout)
+            Text(model.displayName)
+                .font(.callout)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
 

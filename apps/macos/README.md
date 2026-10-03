@@ -43,6 +43,13 @@ Quotio is a native macOS application for managing **CLIProxyAPI** - a local prox
 - **Auto-Update**: Stable releases use Sparkle. Independent beta releases install as Quotio Beta and update through manual downloads.
 - **🌍 Multilingual**: English, Vietnamese, and Simplified Chinese support.
 
+Menu bar quota cards show Antigravity limits as Session and Weekly, followed by
+Claude Session and Claude Weekly. Codex cards use Session and Weekly, followed by
+Spark Session and Spark Weekly. Missing windows are omitted; exhausted limits
+remain visible at 0%. Reset times appear below the progress bar so labels fit.
+Names and ordering come from the CLI/server host contract, not Swift-side bucket
+parsing. Other provider metrics keep their original names.
+
 ## 🤖 Supported Ecosystem
 
 ### AI Providers
