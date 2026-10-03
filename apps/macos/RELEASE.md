@@ -105,13 +105,13 @@ SPARKLE_PRIVATE_KEY=... \
 
 `SIGNING_IDENTITY` defaults to `Developer ID Application`; set it to the identity's SHA-1 hash if multiple Developer ID certificates are installed. `--version` modifies `CHANGELOG.md` and `Quotio.xcodeproj/project.pbxproj`. `--generate-appcast` creates `build/release/appcast.xml` for stable versions and is skipped for prereleases. The script does not create a tag, push, or publish a GitHub Release.
 
-For an independent signed beta, run `NOTARYTOOL_KEYCHAIN_PROFILE=quotio-notarization ./scripts/build_dmg.sh --version 1.0.0-beta-1 --distribution`. It does not require `SPARKLE_PRIVATE_KEY`. Local builds without `--distribution` are ad-hoc smoke artifacts, not notarized distribution builds.
+For an independent signed beta, run `NOTARYTOOL_KEYCHAIN_PROFILE=quotio-notarization ./scripts/build_dmg.sh --version 1.0.0-beta.1 --distribution`. It does not require `SPARKLE_PRIVATE_KEY`. Local builds without `--distribution` are ad-hoc smoke artifacts, not notarized distribution builds.
 
 If App Store Connect credentials are already stored in the System Keychain by `asc`, use them directly without exporting the private key or creating a notarytool profile:
 
 ```bash
 ASC_PROFILE="your-profile" \
-  ./scripts/build_dmg.sh --version 1.0.0-beta-1 --distribution --notarization-provider asc
+  ./scripts/build_dmg.sh --version 1.0.0-beta.1 --distribution --notarization-provider asc
 ```
 
 `--notarization-provider` accepts `notarytool` (the default, also used by CI) or `asc`. The ASC path uses the CLI's existing authentication resolution; `ASC_PROFILE` selects a stored profile without changing its default. Both paths submit the app and DMG, staple their tickets, and require Gatekeeper acceptance before succeeding.
