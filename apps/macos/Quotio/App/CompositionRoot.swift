@@ -419,7 +419,6 @@ private final class ProductionAppRuntimeServices: AppRuntimeServices {
             isRunning: !quotaScreenModel.providerQuotas.isEmpty,
             showMenuBarIcon: menuBarSettings.showMenuBarIcon,
             showQuota: menuBarSettings.showQuotaInMenuBar,
-            appearanceMode: appearanceManager.appearanceMode,
             language: languageManager.currentLanguage
         )
     }
@@ -456,7 +455,6 @@ private final class ProductionAppRuntimeServices: AppRuntimeServices {
             monitorAccounts: accountsScreenModel.accounts,
             quota: quotaScreenModel.state,
             menuBarPreferences: menuBarSettings.preferences,
-            appearanceMode: appearanceManager.appearanceMode,
             language: languageManager.currentLanguage,
             trackingPreferences: quotaController.trackingPreferences
         )

@@ -2,8 +2,8 @@
 //  StatusBarManager.swift
 //  QuotioPresentation
 //
-//  Custom NSStatusBar manager with native NSMenu for Liquid Glass appearance.
-//  Uses NSMenu with SwiftUI hosting views for native macOS styling.
+//  Status item manager. The menu stays a native NSMenu so the system supplies
+//  its material, highlight, keyboard navigation, and dismissal.
 //
 
 import AppKit
@@ -19,7 +19,6 @@ public final class StatusBarManager: NSObject, NSMenuDelegate {
         let quotaDisplayMode: QuotaDisplayMode
         let isRunning: Bool
         let showQuota: Bool
-        let appearanceMode: AppearanceMode
         let language: AppLanguage
     }
 
@@ -31,6 +30,7 @@ public final class StatusBarManager: NSObject, NSMenuDelegate {
     
     private var statusItem: NSStatusItem?
     private var menu: NSMenu?
+    private var menuRenderer: StatusBarMenuRenderer?
     private var isMenuTracking = false
     private var pendingCompanionPresentation: (() -> Void)?
     private let companionPresenter = CompanionPopoverPresenter()
@@ -60,6 +60,13 @@ public final class StatusBarManager: NSObject, NSMenuDelegate {
     private var targetBackingScaleFactor: CGFloat {
         NSScreen.screens.map(\.backingScaleFactor).max() ?? 2.0
     }
+
+    /// Match status-item surfaces to the menu bar, independently of app windows.
+    private var menuBarAppearance: NSAppearance? {
+        guard let button = statusItem?.button else { return nil }
+        let name = button.effectiveAppearance.bestMatch(from: [.darkAqua, .aqua]) ?? .aqua
+        return NSAppearance(named: name)
+    }
     
     public func updateStatusBar(
         items: [MenuBarQuotaDisplayItem],
@@ -68,7 +75,6 @@ public final class StatusBarManager: NSObject, NSMenuDelegate {
         isRunning: Bool,
         showMenuBarIcon: Bool,
         showQuota: Bool,
-        appearanceMode: AppearanceMode,
         language: AppLanguage
     ) {
         guard showMenuBarIcon else {
@@ -82,7 +88,6 @@ public final class StatusBarManager: NSObject, NSMenuDelegate {
             quotaDisplayMode: quotaDisplayMode,
             isRunning: isRunning,
             showQuota: showQuota,
-            appearanceMode: appearanceMode,
             language: language
         )
         menuContentVersion += 1
@@ -103,7 +108,6 @@ public final class StatusBarManager: NSObject, NSMenuDelegate {
             menu = NSMenu()
             menu?.autoenablesItems = false
             menu?.delegate = self
-            menu?.appearance = configuration.appearanceMode.appKitAppearance
         }
         
         // Attach menu to status item
@@ -217,6 +221,7 @@ public final class StatusBarManager: NSObject, NSMenuDelegate {
     
     public func menuDidClose(_ menu: NSMenu) {
         isMenuTracking = false
+        menuRenderer?.highlight(nil)
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             renderStatusBar()
@@ -226,11 +231,15 @@ public final class StatusBarManager: NSObject, NSMenuDelegate {
         }
     }
 
+    public func menu(_ menu: NSMenu, willHighlight item: NSMenuItem?) {
+        menuRenderer?.highlight(item)
+    }
+
     public func presentCompanionPairing(model: CompanionScreenModel, pasteboard: PasteboardScreenModel) {
         let present = { [weak self] in
             guard let self, let button = statusItem?.button else { return }
             companionPresenter.show(relativeTo: button, model: model, pasteboard: pasteboard,
-                                    appearance: configuration?.appearanceMode.appKitAppearance,
+                                    appearance: menuBarAppearance,
                                     locale: configuration?.language.locale ?? .current)
         }
         if isMenuTracking {
@@ -285,11 +294,13 @@ public final class StatusBarManager: NSObject, NSMenuDelegate {
             return
         }
         let snapshot = snapshotProvider()
-        menu.appearance = snapshot.appearanceMode.appKitAppearance
+        let appearance = menuBarAppearance
+        menu.appearance = appearance
         menu.removeAllItems()
 
         let renderer = StatusBarMenuRenderer(
             snapshot: snapshot,
+            appearance: appearance,
             commands: commandDispatcher
         )
         let nativeMenu = renderer.buildMenu()
@@ -298,6 +309,7 @@ public final class StatusBarManager: NSObject, NSMenuDelegate {
             menu.addItem(item)
         }
         renderer.activateProviderFilter(in: menu)
+        menuRenderer = renderer
     }
     
     // MARK: - Menu Actions
@@ -317,6 +329,7 @@ public final class StatusBarManager: NSObject, NSMenuDelegate {
             statusItem = nil
         }
         menu = nil
+        menuRenderer = nil
         configuration = nil
         lastRenderSignature = nil
     }

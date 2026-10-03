@@ -72,20 +72,69 @@ final class StatusBarProviderFilterController {
     }
 }
 
+/// Mirrors the menu's own item highlight so custom item views can draw the
+/// same feedback for pointer and keyboard navigation.
+@MainActor
+@Observable
+final class StatusBarMenuHighlightController {
+    private(set) var highlightedItem: ObjectIdentifier?
+
+    func highlight(_ item: NSMenuItem?) {
+        highlightedItem = item.map(ObjectIdentifier.init)
+    }
+}
+
+// MARK: - Command Menu Item
+
+/// Native menu item for top-level commands, so they keep system highlight,
+/// keyboard navigation, key equivalents, and accessibility roles.
+@MainActor
+private final class StatusBarCommandMenuItem: NSMenuItem {
+    private let command: StatusBarCommand
+    private let commands: StatusBarCommandDispatcher
+
+    init(
+        title: String,
+        symbolName: String,
+        keyEquivalent: String,
+        command: StatusBarCommand,
+        commands: StatusBarCommandDispatcher
+    ) {
+        self.command = command
+        self.commands = commands
+        super.init(title: title, action: #selector(performCommand), keyEquivalent: keyEquivalent)
+        target = self
+        image = NSImage(systemSymbolName: symbolName, accessibilityDescription: nil)
+    }
+
+    @available(*, unavailable)
+    required init(coder: NSCoder) {
+        fatalError("init(coder:) is not supported")
+    }
+
+    @objc private func performCommand() {
+        commands.dispatch(command)
+    }
+}
+
 // MARK: - Status Bar Menu Renderer
 
 @MainActor
 final class StatusBarMenuRenderer {
     private let snapshot: StatusBarMenuSnapshot
+    private let appearance: NSAppearance?
     private let commands: StatusBarCommandDispatcher
     private let providerFilterController: StatusBarProviderFilterController
+    private let highlightController = StatusBarMenuHighlightController()
     private let menuWidth: CGFloat = 360
 
     init(
         snapshot: StatusBarMenuSnapshot,
+        appearance: NSAppearance? = nil,
         commands: StatusBarCommandDispatcher
     ) {
         self.snapshot = snapshot
+        self.appearance = appearance
         self.commands = commands
         let availableProviders = snapshot.providers.map(\.provider)
         let selectedProvider = snapshot.selectedProvider.flatMap { provider in
@@ -128,7 +177,7 @@ final class StatusBarMenuRenderer {
                         self.commands.dispatch(.refreshProvider(providerSnapshot.provider))
                     }
                 )
-                let headerItem = viewItem(for: headerView)
+                let headerItem = viewItem(for: headerView, title: providerSnapshot.displayName)
                 providerFilterController.register(headerItem, scope: .allProvidersOnly)
                 menu.addItem(headerItem)
 
@@ -140,7 +189,15 @@ final class StatusBarMenuRenderer {
                     )
                     menu.addItem(emptyItem)
                 } else {
-                    for account in providerSnapshot.accounts {
+                    for (accountIndex, account) in providerSnapshot.accounts.enumerated() {
+                        if accountIndex > 0 {
+                            let separator = NSMenuItem.separator()
+                            providerFilterController.register(
+                                separator,
+                                scope: .provider(providerSnapshot.provider)
+                            )
+                            menu.addItem(separator)
+                        }
                         let cardItem = buildAccountCardItem(account)
                         providerFilterController.register(
                             cardItem,
@@ -178,46 +235,51 @@ final class StatusBarMenuRenderer {
         providerFilterController.activate(in: menu)
     }
 
+    func highlight(_ item: NSMenuItem?) {
+        highlightController.highlight(item)
+    }
+
     // MARK: - Header Item
     
     private func buildHeaderItem() -> NSMenuItem {
         let headerView = MenuHeaderView(isLoading: snapshot.isLoadingQuotas)
-        return viewItem(for: headerView)
+        return viewItem(for: headerView, title: "Quotio")
     }
-
-    // MARK: - Network Info Item (Proxy + Tunnel combined)
 
     // MARK: - Account Card Item
 
     private func buildAccountCardItem(_ account: StatusBarMenuAccountSnapshot) -> NSMenuItem {
         let provider = account.id.provider
+        let item = NSMenuItem()
+        item.title = snapshot.displaySettings.hideSensitiveInfo
+            ? "privacy.accountHidden".localized()
+            : account.email
+
+        let isAntigravitySummary = provider == .antigravity
+            && account.quota.models.contains { $0.name.hasPrefix("antigravity-") }
+
+        if provider == .codex, let analytics = account.quota.analytics, !analytics.isEmpty {
+            item.submenu = buildCodexAnalyticsSubmenu(analytics: analytics)
+        } else if provider == .antigravity && !account.quota.models.isEmpty && !isAntigravitySummary {
+            item.submenu = buildAntigravitySubmenu(data: account.quota)
+        }
+
         let cardView = MenuAccountCardView(
-            accountKey: account.id.accountKey,
             email: account.email,
             data: account.quota,
             provider: provider,
             subscriptionInfo: account.subscription,
             isRefreshing: account.isRefreshing,
             canRefresh: !account.isRefreshBlocked,
+            hasDetail: item.submenu != nil,
+            itemID: ObjectIdentifier(item),
+            highlightController: highlightController,
             settings: snapshot.displaySettings,
             onRefresh: {
                 self.commands.dispatch(.refreshAccount(account.id))
             }
         )
-
-        let item = viewItem(for: cardView)
-
-        let isAntigravitySummary = provider == .antigravity
-            && account.quota.models.contains { $0.name.hasPrefix("antigravity-") }
-
-        if provider == .codex, let analytics = account.quota.analytics, !analytics.isEmpty {
-            let submenu = buildCodexAnalyticsSubmenu(analytics: analytics)
-            item.submenu = submenu
-        } else if provider == .antigravity && !account.quota.models.isEmpty && !isAntigravitySummary {
-            let submenu = buildAntigravitySubmenu(data: account.quota)
-            item.submenu = submenu
-        }
-
+        item.view = hostingView(for: cardView)
         return item
     }
 
@@ -241,7 +303,7 @@ final class StatusBarMenuRenderer {
                 model: model,
                 showRawName: !isSummary,
                 settings: snapshot.displaySettings
-            ))
+            ), title: isSummary ? model.displayName : model.name)
             submenu.addItem(modelItem)
         }
 
@@ -252,44 +314,64 @@ final class StatusBarMenuRenderer {
     
     private func buildEmptyStateItem() -> NSMenuItem {
         let emptyView = MenuEmptyStateView()
-        return viewItem(for: emptyView)
+        return viewItem(for: emptyView, title: "menubar.noData".localized())
     }
     
     // MARK: - Action Items
-    
+
     private func buildActionItems() -> [NSMenuItem] {
-        let actionsView = MenuActionsView(
-            canRefresh: snapshot.canRefresh,
-            isLoading: snapshot.isLoadingQuotas,
-            onRefresh: { self.commands.dispatch(.refreshAll) },
-            onPairIPhone: { self.commands.dispatch(.pairIPhone) },
-            onOpenApp: { self.commands.dispatch(.openApp) },
-            onQuit: { self.commands.dispatch(.quit) }
-        )
-        return [viewItem(for: actionsView)]
+        let refresh = commandItem("action.refresh", symbol: "arrow.clockwise", key: "r", command: .refreshAll)
+        refresh.isEnabled = snapshot.canRefresh && !snapshot.isLoadingQuotas
+        return [
+            refresh,
+            commandItem("companion.pair", symbol: "iphone", key: "", command: .pairIPhone),
+            commandItem("action.openApp", symbol: "gearshape", key: ",", command: .openApp),
+            .separator(),
+            commandItem("action.quit", symbol: "xmark.circle", key: "q", command: .quit),
+        ]
     }
-    
+
     // MARK: - Helpers
+
+    private func commandItem(
+        _ titleKey: String,
+        symbol: String,
+        key: String,
+        command: StatusBarCommand
+    ) -> NSMenuItem {
+        StatusBarCommandMenuItem(
+            title: titleKey.localized(),
+            symbolName: symbol,
+            keyEquivalent: key,
+            command: command,
+            commands: commands
+        )
+    }
 
     private func makeMenu() -> NSMenu {
         let menu = NSMenu()
         menu.autoenablesItems = false
-        menu.appearance = snapshot.appearanceMode.appKitAppearance
+        menu.appearance = appearance
         return menu
     }
-    
-    private func viewItem<V: View>(for view: V, width: CGFloat? = nil) -> NSMenuItem {
-        let effectiveWidth = width ?? menuWidth
+
+    /// The title is never drawn for view items, but AppKit still uses it for
+    /// type-select.
+    private func viewItem<V: View>(for view: V, title: String = "", width: CGFloat? = nil) -> NSMenuItem {
+        let item = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+        item.view = hostingView(for: view, width: width)
+        return item
+    }
+
+    /// Item views inherit the menu's appearance, so AppKit and SwiftUI resolve
+    /// the same light or dark context as the system menu material.
+    private func hostingView<V: View>(for view: V, width: CGFloat? = nil) -> NSView {
         let rootView = view
-            .frame(width: effectiveWidth)
+            .frame(width: width ?? menuWidth)
             .environment(\.locale, snapshot.language.locale)
         let hostingView = NSHostingView(rootView: rootView)
-        hostingView.appearance = snapshot.appearanceMode.appKitAppearance
         hostingView.setFrameSize(hostingView.intrinsicContentSize)
-        
-        let item = NSMenuItem()
-        item.view = hostingView
-        return item
+        return hostingView
     }
 }
 
@@ -304,21 +386,18 @@ private struct MenuHeaderView: View {
         HStack {
             Text("Quotio")
                 .font(.headline)
-                .fontWeight(.semibold)
-            
+
             Spacer()
-            
+
             if isLoading {
                 ProgressView()
-                    .scaleEffect(0.6)
+                    .controlSize(.small)
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, MenuItemMetrics.contentInset)
+        .padding(.vertical, 6)
     }
 }
-
-
 
 // MARK: - Provider Section Header
 
@@ -333,27 +412,29 @@ private struct MenuProviderSectionHeader: View {
         HStack(spacing: 6) {
             ProviderIconMono(provider: provider, size: 14)
             Text(displayName)
-                .font(.system(size: 11, weight: .semibold, design: .rounded))
-                .foregroundStyle(.secondary)
+                .font(.subheadline.weight(.semibold))
             Spacer()
 
             Button(action: onRefresh) {
                 if isRefreshing {
                     ProgressView()
                         .controlSize(.mini)
-                        .frame(width: 18, height: 18)
+                        .frame(width: 20, height: 20)
                 } else {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10, weight: .semibold))
-                        .frame(width: 18, height: 18)
+                        .font(.subheadline.weight(.medium))
+                        .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
             }
             .buttonStyle(.plain)
             .disabled(isRefreshing || !supportsScopedRefresh)
             .help("action.refreshQuota".localized())
+            .accessibilityLabel("action.refreshQuota".localized())
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
+        .foregroundStyle(.secondary)
+        .padding(.horizontal, MenuItemMetrics.contentInset)
+        .padding(.vertical, 3)
     }
 }
 
@@ -364,90 +445,63 @@ private struct MenuProviderPickerView: View {
     let controller: StatusBarProviderFilterController
     
     var body: some View {
-        // Wrap providers in a flexible layout
         FlowLayout(spacing: 6) {
-            AllProviderFilterButton(isSelected: controller.selectedProvider == nil) {
-                controller.select(nil)
+            ProviderFilterChip(
+                title: "menubar.providers.all".localized(),
+                isSelected: controller.selectedProvider == nil,
+                action: { controller.select(nil) }
+            ) {
+                Image(systemName: "square.grid.2x2")
+                    .font(.subheadline)
             }
 
             ForEach(providers, id: \.provider) { item in
-                ProviderFilterButton(
-                    provider: item.provider,
-                    displayName: item.displayName,
-                    isSelected: controller.selectedProvider == item.provider
+                ProviderFilterChip(
+                    title: item.displayName,
+                    isSelected: controller.selectedProvider == item.provider,
+                    action: { controller.select(item.provider) }
                 ) {
-                    controller.select(item.provider)
+                    ProviderIconMono(provider: item.provider, size: 14)
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 8)
+        .padding(.horizontal, MenuItemMetrics.contentInset)
+        .padding(.vertical, 6)
     }
 }
 
-// MARK: All Provider Filter Button
+// MARK: Provider Filter Chip
 
-private struct AllProviderFilterButton: View {
+/// The selected filter is the only tinted control in the menu; selection is
+/// also exposed through weight and the accessibility selected trait.
+private struct ProviderFilterChip<Icon: View>: View {
+    let title: String
     let isSelected: Bool
     let action: () -> Void
+    @ViewBuilder let icon: Icon
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 6) {
-                Image(systemName: "square.grid.2x2")
-                    .font(.system(size: 12, weight: .semibold))
+            HStack(spacing: 5) {
+                icon
                     .frame(width: 14, height: 14)
-                    .opacity(isSelected ? 1.0 : 0.7)
-
-                Text("menubar.providers.all".localized())
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium, design: .rounded))
+                Text(title)
+                    .font(.subheadline.weight(isSelected ? .semibold : .regular))
             }
-            .foregroundStyle(isSelected ? .primary : .secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(isSelected ? Color.accentColor.opacity(0.1) : Color.secondary.opacity(0.05))
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
-            )
+            .foregroundStyle(isSelected ? Color(nsColor: .alternateSelectedControlTextColor) : Color.primary)
+            .padding(.horizontal, 9)
+            .padding(.vertical, 5)
+            .background {
+                if isSelected {
+                    Capsule().fill(Color.accentColor)
+                } else {
+                    Capsule().fill(.fill.quaternary)
+                }
+            }
+            .contentShape(Capsule())
         }
         .buttonStyle(.plain)
-    }
-}
-
-// MARK: Provider Filter Button
-
-private struct ProviderFilterButton: View {
-    let provider: QuotaProvider
-    let displayName: String
-    let isSelected: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            HStack(spacing: 6) {
-                ProviderIconMono(provider: provider, size: 14)
-                    .opacity(isSelected ? 1.0 : 0.7)
-                
-                Text(displayName)
-                    .font(.system(size: 11, weight: isSelected ? .semibold : .medium, design: .rounded))
-            }
-            .foregroundStyle(isSelected ? .primary : .secondary)
-            .padding(.horizontal, 10)
-            .padding(.vertical, 6)
-            .background(
-                Capsule()
-                    .fill(isSelected ? Color.accentColor.opacity(0.1) : Color.secondary.opacity(0.05))
-            )
-            .overlay(
-                Capsule()
-                    .strokeBorder(isSelected ? Color.accentColor.opacity(0.3) : Color.clear, lineWidth: 1)
-            )
-        }
-        .buttonStyle(.plain)
+        .accessibilityAddTraits(isSelected ? .isSelected : [])
     }
 }
 
@@ -478,85 +532,70 @@ private struct ProviderIconMono: View {
 // MARK: Account Card View
 
 private struct MenuAccountCardView: View {
-    let accountKey: String
     let email: String
     let data: ProviderQuota
     let provider: QuotaProvider
     let subscriptionInfo: QuotaSubscriptionInfo?
     let isRefreshing: Bool
     let canRefresh: Bool
+    let hasDetail: Bool
+    let itemID: ObjectIdentifier
+    let highlightController: StatusBarMenuHighlightController
     let settings: StatusBarMenuDisplaySettings
     let onRefresh: () -> Void
 
-    @State private var isHovered = false
-    
-    private var tierConfig: (name: String, bgColor: Color, textColor: Color)? {
-        guard let name = data.planType ?? subscriptionInfo?.tierDisplayName else { return nil }
-        return planConfig(for: name)
+    private var planName: String? {
+        data.planType ?? subscriptionInfo?.tierDisplayName
     }
 
-    private func planConfig(for planName: String) -> (name: String, bgColor: Color, textColor: Color) {
-        let lowercased = planName.lowercased()
-        
-        if lowercased.contains("ultra") {
-            return (planName, .orange.opacity(0.15), .orange)
-        }
-        if lowercased.contains("pro") {
-            return (planName, .blue.opacity(0.15), .blue)
-        }
-        if lowercased.contains("plus") {
-            return (planName, .blue.opacity(0.15), .blue)
-        }
-        if lowercased.contains("team") {
-            return (planName, .orange.opacity(0.15), .orange)
-        }
-        if lowercased.contains("enterprise") {
-            return (planName, .red.opacity(0.15), .red)
-        }
-        if lowercased.contains("business") {
-            return (planName, .red.opacity(0.15), .red)
-        }
-        if lowercased.contains("free") || lowercased.contains("standard") {
-            return (planName, .secondary.opacity(0.1), .secondary)
-        }
-        
-        return (planName, .secondary.opacity(0.1), .secondary)
+    private var isHighlighted: Bool {
+        highlightController.highlightedItem == itemID
     }
-    
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 12) {
+        VStack(alignment: .leading, spacing: 10) {
             headerSection
-            
+
             quotaContentSection
-            
+
             footerSection
         }
-        .padding(12)
-        .background(
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .fill(isHovered ? Color.secondary.opacity(0.08) : Color.secondary.opacity(0.04))
-        )
-        .padding(.horizontal, 8)
-        .padding(.vertical, 4)
-        .onHover { isHovered = $0 }
+        .padding(.horizontal, MenuItemMetrics.contentInset)
+        .padding(.vertical, 8)
+        .background {
+            if isHighlighted {
+                RoundedRectangle(cornerRadius: MenuItemMetrics.highlightCornerRadius, style: .continuous)
+                    .fill(.fill.tertiary)
+                    .padding(.horizontal, MenuItemMetrics.highlightInset)
+            }
+        }
     }
-    
+
     // MARK: - Header
-    
+
     private var headerSection: some View {
-        HStack(alignment: .center, spacing: 8) {
-            // Provider Icon
+        HStack(alignment: .center, spacing: 6) {
             ProviderIconMono(provider: provider, size: 16)
                 .foregroundStyle(.secondary)
-                .opacity(0.8)
-            
-            // Email
+
             SensitiveAccountText(value: email, isSensitive: settings.hideSensitiveInfo)
-                .font(.system(size: 13, weight: .medium, design: .rounded))
+                .font(.body.weight(.medium))
                 .foregroundStyle(.primary)
                 .lineLimit(1)
-            
-            Spacer()
+                .truncationMode(.middle)
+
+            if let planName {
+                Text(planName)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+                    .lineLimit(1)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(.fill.quaternary, in: Capsule())
+                    .fixedSize()
+            }
+
+            Spacer(minLength: 4)
 
             Button(action: onRefresh) {
                 if isRefreshing {
@@ -565,26 +604,23 @@ private struct MenuAccountCardView: View {
                         .frame(width: 20, height: 20)
                 } else {
                     Image(systemName: "arrow.clockwise")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.subheadline.weight(.medium))
                         .foregroundStyle(.secondary)
                         .frame(width: 20, height: 20)
+                        .contentShape(Rectangle())
                 }
             }
             .buttonStyle(.plain)
             .disabled(!canRefresh)
             .help("action.refreshQuota".localized())
-            
-            // Tier Badge
-            if let config = tierConfig {
-                Text(config.name)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(config.textColor)
-                    .padding(.horizontal, 8)
-                    .padding(.vertical, 3)
-                    .background(config.bgColor)
-                    .clipShape(Capsule())
+            .accessibilityLabel("action.refreshQuota".localized())
+
+            if hasDetail {
+                Image(systemName: "chevron.right")
+                    .font(.subheadline.weight(.semibold))
+                    .foregroundStyle(.secondary)
+                    .accessibilityHidden(true)
             }
-            
         }
     }
 
@@ -597,18 +633,18 @@ private struct MenuAccountCardView: View {
         return VStack(spacing: 8) {
             if groups.isEmpty && standaloneModels.isEmpty {
                 Text("dashboard.noQuotaData".localized())
-                    .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
-                    .padding(.vertical, 8)
+                    .padding(.vertical, 6)
             }
             ForEach(groups.indices, id: \.self) { index in
                 let group = groups[index]
                 if let name = group.name {
-                    HStack(spacing: 8) {
-                        Text(name).font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-                        Rectangle().fill(.secondary.opacity(0.15)).frame(height: 1)
-                    }
+                    Text(name)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
                 }
                 quotaLayout(models: group.models.map {
                     ModelBadgeData(id: $0.id, name: $0.displayName, percentage: $0.percentage, resetTime: $0.resetTime)
@@ -618,15 +654,13 @@ private struct MenuAccountCardView: View {
             ForEach(standaloneModels) { model in
                 HStack(spacing: 8) {
                     Text(model.displayName)
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .font(.callout)
                         .foregroundStyle(.secondary)
                     Spacer()
                     Text(model.formattedUsage ?? "—")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
+                        .font(.callout.weight(.medium).monospacedDigit())
                         .foregroundStyle(.primary)
                 }
-                .padding(.horizontal, 8)
-                .padding(.vertical, 5)
                 .menuNativeTooltip(model.tooltip ?? "")
             }
         }
@@ -647,54 +681,19 @@ private struct MenuAccountCardView: View {
     // MARK: - Footer
 
     private var footerSection: some View {
-        HStack(spacing: 12) {
-            // Reset info is now shown inside each metric, so only show last update here
-            Spacer()
-
-            // Last Update
-            Text(data.lastUpdated.formatted(.relative(presentation: .named)))
-                .font(.system(size: 10, design: .rounded))
-                .foregroundStyle(.secondary)
-        }
+        Text(data.lastUpdated.formatted(.relative(presentation: .named)))
+            .font(.caption)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity, alignment: .trailing)
     }
-    
-    private var displayStyle: QuotaDisplayStyle { settings.quotaDisplayStyle }
-    
-    private var primaryResetModel: QuotaMetric? {
-        let formatter = ISO8601DateFormatter()
-        let now = Date()
-        
-        let validModels = data.models.filter { model in
-            guard let date = formatter.date(from: model.resetTime) else { return false }
-            return date > now
-        }
-        
-        return validModels.sorted { m1, m2 in
-            if abs(m1.percentage - m2.percentage) > 0.1 {
-                return m1.percentage < m2.percentage
-            }
-            let d1 = formatter.date(from: m1.resetTime) ?? Date.distantFuture
-            let d2 = formatter.date(from: m2.resetTime) ?? Date.distantFuture
-            return d1 < d2
-        }.first
-    }
-    
-    private func formatLocalTime(_ isoString: String) -> String {
-        // Try parsing with fractional seconds first, then standard format
-        let isoFormatterWithFractional = ISO8601DateFormatter()
-        isoFormatterWithFractional.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+}
 
-        let isoFormatterStandard = ISO8601DateFormatter()
-        isoFormatterStandard.formatOptions = [.withInternetDateTime]
-
-        guard let date = isoFormatterWithFractional.date(from: isoString)
-              ?? isoFormatterStandard.date(from: isoString) else { return "" }
-
-        let formatter = DateFormatter()
-        formatter.dateStyle = .medium
-        formatter.timeStyle = .short
-        return formatter.string(from: date)
-    }
+/// Geometry shared by custom item views so their padding and highlight match
+/// the system rows they sit beside.
+private enum MenuItemMetrics {
+    static let contentInset: CGFloat = 16
+    static let highlightInset: CGFloat = 5
+    static let highlightCornerRadius: CGFloat = 7
 }
 
 private struct AnalyticsDetailSection: View {
@@ -773,14 +772,14 @@ private struct AnalyticsDetailSection: View {
             VStack(alignment: .leading, spacing: 8) {
                 HStack(alignment: .firstTextBaseline, spacing: 8) {
                     Text("Usage Trend")
-                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .font(.subheadline.weight(.semibold))
                         .foregroundStyle(.primary)
 
                     Spacer()
 
                     if analytics.trend.isEmpty {
                         Text("No data")
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .font(.caption)
                             .foregroundStyle(.secondary)
                     } else {
                         AnalyticsTrendModePicker(selection: $trendMode)
@@ -799,8 +798,8 @@ private struct AnalyticsDetailSection: View {
 
             if shouldShowNote, let note = analytics.note, !note.isEmpty {
                 Text(note)
-                    .font(.system(size: 9, design: .rounded))
-                    .foregroundStyle(.tertiary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
                     .lineLimit(2)
                     .fixedSize(horizontal: false, vertical: true)
             }
@@ -821,11 +820,11 @@ private struct ResetCreditsInventoryView: View {
     var body: some View {
         HStack(spacing: 10) {
             Image(systemName: "gift")
-                .font(.system(size: 14, weight: .semibold))
-                .foregroundStyle(Color.blue)
+                .font(.body.weight(.semibold))
+                .foregroundStyle(.secondary)
 
             Text(countLabel)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .font(.body.weight(.semibold).monospacedDigit())
                 .foregroundStyle(.primary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.85)
@@ -844,14 +843,7 @@ private struct ResetCreditsInventoryView: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 7)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.primary.opacity(0.025))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.separator.opacity(0.45), lineWidth: 1)
-        )
+        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 
     private func compactRelativeLabel(_ value: String) -> String {
@@ -881,15 +873,12 @@ private struct ResetCreditChip: View {
 
     var body: some View {
         Text(label)
-            .font(.system(size: 12, weight: .medium, design: .monospaced))
-            .foregroundStyle(isNext ? Color.blue : .secondary)
+            .font(.callout.weight(isNext ? .semibold : .regular).monospacedDigit())
+            .foregroundStyle(isNext ? .primary : .secondary)
             .lineLimit(1)
             .padding(.horizontal, 8)
             .padding(.vertical, 4)
-            .background(
-                Capsule(style: .continuous)
-                    .fill(isNext ? Color.blue.opacity(0.18) : Color.primary.opacity(0.08))
-            )
+            .background(isNext ? AnyShapeStyle(.fill.secondary) : AnyShapeStyle(.fill.quaternary), in: Capsule(style: .continuous))
             .contentShape(Capsule(style: .continuous))
             .menuNativeTooltip(tooltip)
     }
@@ -906,21 +895,14 @@ private struct AnalyticsMetricStripView: View {
 
                 if index < rows.count - 1 {
                     Rectangle()
-                        .fill(.separator.opacity(0.45))
+                        .fill(.separator)
                         .frame(width: 1, height: 34)
                 }
             }
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .fill(Color.primary.opacity(0.025))
-        )
-        .overlay(
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.separator.opacity(0.45), lineWidth: 1)
-        )
+        .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
     }
 }
 
@@ -939,13 +921,13 @@ private struct AnalyticsMetricTileView: View {
     var body: some View {
         VStack(spacing: 4) {
             Text(displayValue)
-                .font(.system(size: 13, weight: .semibold, design: .monospaced))
+                .font(.body.weight(.semibold).monospacedDigit())
                 .foregroundStyle(row.isAvailable ? .primary : .secondary)
                 .lineLimit(1)
                 .minimumScaleFactor(0.8)
 
             Text(row.title)
-                .font(.system(size: 11, weight: .medium, design: .monospaced))
+                .font(.caption.weight(.medium))
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.tail)
@@ -982,11 +964,12 @@ private struct AnalyticsTrendModePicker: View {
                     selection = mode
                 } label: {
                     Text(mode.title)
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
-                        .foregroundStyle(selection == mode ? .primary : .tertiary)
+                        .font(.caption.weight(selection == mode ? .semibold : .regular))
+                        .foregroundStyle(selection == mode ? .primary : .secondary)
                         .contentShape(Rectangle())
                 }
                 .buttonStyle(.plain)
+                .accessibilityAddTraits(selection == mode ? .isSelected : [])
             }
         }
     }
@@ -1260,12 +1243,12 @@ private struct UsageTrendHeatmap: View {
                 HStack(spacing: 0) {
                     ForEach(data.monthLabels) { label in
                         Text(label.title)
-                            .font(.system(size: 9, weight: .medium, design: .rounded))
-                            .foregroundStyle(.tertiary)
+                            .font(.caption2)
+                            .foregroundStyle(.secondary)
                             .frame(width: monthLabelWidth(for: label, in: data), alignment: .leading)
                     }
                 }
-                .frame(width: data.width, height: 12, alignment: .leading)
+                .frame(width: data.width, height: 13, alignment: .leading)
 
                 HStack(alignment: .top, spacing: spacing) {
                     ForEach(data.weeks) { week in
@@ -1281,15 +1264,15 @@ private struct UsageTrendHeatmap: View {
 
             if let hoveredText {
                 Text(hoveredText)
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
+                    .font(.caption.weight(.semibold).monospacedDigit())
                     .foregroundStyle(.primary)
                     .lineLimit(1)
                     .padding(.horizontal, 10)
                     .padding(.vertical, 6)
-                    .background(.regularMaterial, in: Capsule())
+                    .background(Color(nsColor: .windowBackgroundColor), in: Capsule())
                     .overlay(
                         Capsule()
-                            .stroke(Color.primary.opacity(0.08), lineWidth: 1)
+                            .stroke(.separator, lineWidth: 1)
                     )
                     .shadow(color: .black.opacity(0.16), radius: 8, y: 3)
                     .offset(y: 18)
@@ -1435,14 +1418,14 @@ private struct AnalyticsRowView: View {
     var body: some View {
         HStack(alignment: .firstTextBaseline, spacing: 12) {
             Text(row.title)
-                .font(.system(size: 10, weight: .semibold, design: .rounded))
+                .font(.caption.weight(.semibold))
                 .foregroundStyle(row.isAvailable ? .primary : .secondary)
                 .lineLimit(1)
 
             Spacer(minLength: 8)
 
             Text(row.value)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .font(.caption.monospacedDigit())
                 .foregroundStyle(row.isAvailable ? .primary : .secondary)
                 .multilineTextAlignment(.trailing)
                 .lineLimit(1)
@@ -1509,6 +1492,8 @@ private func menuPercentText(remainingPercent: Double, displayMode: QuotaDisplay
     return "\(Int(menuDisplayPercent(remainingPercent: remainingPercent, displayMode: displayMode)))%"
 }
 
+/// Status tint for quota meters. Numbers stay in label colors so the value is
+/// readable on the menu material regardless of tint.
 private func menuStatusColor(remainingPercent: Double, displayMode: QuotaDisplayMode) -> Color {
     guard remainingPercent >= 0 else { return .secondary }
     let usedPercent = 100 - remainingPercent
@@ -1516,7 +1501,7 @@ private func menuStatusColor(remainingPercent: Double, displayMode: QuotaDisplay
 
     if displayMode == .used {
         if checkValue < 70 { return .green }
-        if checkValue < 90 { return .yellow }
+        if checkValue < 90 { return .orange }
         return .red
     } else {
         if checkValue > 50 { return .green }
@@ -1535,78 +1520,59 @@ private struct LowestBarLayout: View {
         models.sorted { $0.percentage < $1.percentage }
     }
 
-    private var lowest: ModelBadgeData? {
-        sorted.first
-    }
-
-    private var others: [ModelBadgeData] {
-        Array(sorted.dropFirst())
-    }
-
     var body: some View {
-        VStack(spacing: 8) {
-            if let lowest = lowest {
-                // Hero Row for Lowest with reset time
-                VStack(alignment: .leading, spacing: 6) {
-                    HStack {
+        VStack(spacing: 6) {
+            if let lowest = sorted.first {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(alignment: .firstTextBaseline) {
                         Text(lowest.name)
-                            .font(.system(size: 12, weight: .semibold, design: .rounded))
+                            .font(.callout.weight(.medium))
                             .foregroundStyle(.primary)
-                        Spacer()
-                        PercentageBadge(
-                            percentage: lowest.percentage,
-                            displayMode: displayMode,
-                            style: .textOnly
-                        )
+                            .lineLimit(1)
+                        Spacer(minLength: 8)
+                        Text(menuPercentText(remainingPercent: lowest.percentage, displayMode: displayMode))
+                            .font(.callout.weight(.semibold).monospacedDigit())
+                            .foregroundStyle(.primary)
                     }
 
                     ModernProgressBar(
                         percentage: lowest.percentage,
-                        height: 8,
+                        height: 6,
                         displayMode: displayMode
                     )
 
                     if let resetTime = lowest.formattedResetTime {
                         HStack(spacing: 4) {
                             Image(systemName: "clock.arrow.circlepath")
-                                .font(.system(size: 9))
                             Text(resetTime)
-                                .font(.system(size: 9, weight: .medium, design: .rounded))
+                                .monospacedDigit()
                         }
-                        .foregroundStyle(.tertiary)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                     }
                 }
                 .padding(8)
-                .background(menuStatusColor(remainingPercent: lowest.percentage, displayMode: displayMode).opacity(0.08))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
-                .overlay(
-                    RoundedRectangle(cornerRadius: 8)
-                        .stroke(menuStatusColor(remainingPercent: lowest.percentage, displayMode: displayMode).opacity(0.2), lineWidth: 1)
-                )
+                .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
             }
 
-            // Others as text rows (one per line)
-            if !others.isEmpty {
-                VStack(spacing: 4) {
-                    ForEach(others, id: \.name) { (model: ModelBadgeData) in
-                        HStack(spacing: 6) {
-                            Text(model.name)
-                                .font(.system(size: 10, weight: .medium, design: .rounded))
-                                .foregroundStyle(.secondary)
-                                .lineLimit(1)
-                            Spacer()
-                            if let resetTime = model.formattedResetTime {
-                                Text(resetTime)
-                                    .font(.system(size: 9, design: .rounded))
-                                    .foregroundStyle(.tertiary)
-                            }
-                            Text(menuPercentText(remainingPercent: model.percentage, displayMode: displayMode))
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(menuStatusColor(remainingPercent: model.percentage, displayMode: displayMode))
-                        }
-                        .padding(.vertical, 2)
+            ForEach(sorted.dropFirst(), id: \.name) { (model: ModelBadgeData) in
+                HStack(spacing: 6) {
+                    Text(model.name)
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Spacer()
+                    if let resetTime = model.formattedResetTime {
+                        Text(resetTime)
+                            .monospacedDigit()
+                            .foregroundStyle(.secondary)
                     }
+                    Text(menuPercentText(remainingPercent: model.percentage, displayMode: displayMode))
+                        .fontWeight(.semibold)
+                        .monospacedDigit()
+                        .foregroundStyle(.primary)
                 }
+                .font(.caption)
+                .padding(.horizontal, 8)
             }
         }
     }
@@ -1629,25 +1595,24 @@ private struct RingGridLayout: View {
     }
 
     var body: some View {
-        // Auto-distribute 1-4 columns, cap at 4
         LazyVGrid(columns: columns, spacing: 10) {
             ForEach(models, id: \.name) { (model: ModelBadgeData) in
-                VStack(spacing: 4) {
+                VStack(spacing: 3) {
                     RingProgressView(percent: menuDisplayPercent(remainingPercent: model.percentage, displayMode: displayMode), size: ringSize, lineWidth: 4, tint: menuStatusColor(remainingPercent: model.percentage, displayMode: displayMode), showLabel: true)
 
                     Text(model.name)
-                        .font(.system(size: 10, weight: .medium, design: .rounded))
+                        .font(.caption)
                         .foregroundStyle(.secondary)
                         .lineLimit(1)
-                        .minimumScaleFactor(0.8)
 
                     if let resetTime = model.formattedResetTime {
                         Text(resetTime)
-                            .font(.system(size: 8, design: .rounded))
-                            .foregroundStyle(.tertiary)
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
                     }
                 }
                 .frame(maxWidth: .infinity)
+                .help(model.name)
             }
         }
     }
@@ -1665,32 +1630,28 @@ private struct CardGridLayout: View {
             return [GridItem(.flexible()), GridItem(.flexible())]
         }
     }
-    
+
     var body: some View {
-        LazyVGrid(columns: columns, spacing: 8) {
+        LazyVGrid(columns: columns, spacing: 6) {
             ForEach(models, id: \.name) { (model: ModelBadgeData) in
-                VStack(alignment: .leading, spacing: 4) {
-                    HStack {
+                VStack(alignment: .leading, spacing: 5) {
+                    HStack(spacing: 4) {
                         Text(model.name)
-                            .font(.system(size: 10, weight: .medium, design: .rounded))
+                            .fontWeight(.medium)
                             .foregroundStyle(.secondary)
                             .lineLimit(1)
-                        Spacer()
+                        Spacer(minLength: 2)
                         if let resetTime = model.formattedResetTime {
                             Text(resetTime)
-                                .font(.system(size: 9, design: .rounded))
-                                .foregroundStyle(.tertiary)
+                                .monospacedDigit()
+                                .foregroundStyle(.secondary)
                         }
-                        if let usage = model.usage {
-                            Text(usage)
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(.primary)
-                        } else {
-                            Text(menuPercentText(remainingPercent: model.percentage, displayMode: displayMode))
-                                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                                .foregroundStyle(menuStatusColor(remainingPercent: model.percentage, displayMode: displayMode))
-                        }
+                        Text(model.usage ?? menuPercentText(remainingPercent: model.percentage, displayMode: displayMode))
+                            .fontWeight(.semibold)
+                            .monospacedDigit()
+                            .foregroundStyle(.primary)
                     }
+                    .font(.caption)
 
                     if model.usage == nil {
                         ModernProgressBar(
@@ -1701,12 +1662,11 @@ private struct CardGridLayout: View {
                     }
                 }
                 .padding(8)
-                .background(Color.secondary.opacity(0.05))
-                .clipShape(RoundedRectangle(cornerRadius: 8))
+                .background(.fill.quaternary, in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                .help(model.name)
             }
         }
     }
-
 }
 
 // MARK: - Shared Components
@@ -1715,66 +1675,24 @@ private struct ModernProgressBar: View {
     let percentage: Double
     let height: CGFloat
     let displayMode: QuotaDisplayMode
-    
+
     private var displayPercent: Double {
         menuDisplayPercent(remainingPercent: percentage, displayMode: displayMode)
     }
-    
-    var color: Color {
-        menuStatusColor(remainingPercent: percentage, displayMode: displayMode)
-    }
-    
+
     var body: some View {
         GeometryReader { proxy in
             ZStack(alignment: .leading) {
                 Capsule()
-                    .fill(Color.secondary.opacity(0.15))
-                
+                    .fill(.fill.tertiary)
+
                 Capsule()
-                    .fill(
-                        LinearGradient(
-                            colors: [color, color.opacity(0.8)],
-                            startPoint: .leading,
-                            endPoint: .trailing
-                        )
-                    )
+                    .fill(menuStatusColor(remainingPercent: percentage, displayMode: displayMode))
                     .frame(width: proxy.size.width * min(1, max(0, displayPercent / 100)))
             }
         }
         .frame(height: height)
-    }
-}
-
-private struct PercentageBadge: View {
-    let percentage: Double
-    let displayMode: QuotaDisplayMode
-    var style: Style = .pill
-    
-    enum Style { case pill, textOnly }
-    
-    var color: Color {
-        menuStatusColor(remainingPercent: percentage, displayMode: displayMode)
-    }
-
-    private var displayText: String {
-        menuPercentText(remainingPercent: percentage, displayMode: displayMode)
-    }
-
-    var body: some View {
-        switch style {
-        case .pill:
-            Text(displayText)
-                .font(.system(size: 10, weight: .bold, design: .monospaced))
-                .foregroundStyle(color)
-                .padding(.horizontal, 6)
-                .padding(.vertical, 2)
-                .background(color.opacity(0.1))
-                .clipShape(Capsule())
-        case .textOnly:
-            Text(displayText)
-                .font(.system(size: 12, weight: .bold, design: .monospaced))
-                .foregroundStyle(color)
-        }
+        .accessibilityHidden(true)
     }
 }
 
@@ -1796,7 +1714,7 @@ private struct MenuModelDetailView: View {
 
         HStack(spacing: 8) {
             Text(showRawName ? model.name : model.displayName)
-                .font(.system(size: 11, weight: .medium, design: showRawName ? .monospaced : .rounded))
+                .font(showRawName ? .callout.monospaced() : .callout)
                 .foregroundStyle(.primary)
                 .lineLimit(1)
 
@@ -1804,22 +1722,22 @@ private struct MenuModelDetailView: View {
 
             if let usage = model.formattedUsage {
                 Text(usage)
-                    .font(.system(size: 10, design: .monospaced))
-                    .foregroundStyle(.tertiary)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
 
             if !model.isStandaloneMetric && displayStyle != .ring {
                 Text(displayPercent >= 0
                     ? String(format: "%.0f%% %@", displayPercent, displayMode.suffixKey.localized())
                     : "—")
-                    .font(.system(size: 10, weight: .semibold, design: .rounded))
-                    .foregroundStyle(statusColor)
+                    .font(.caption.weight(.semibold).monospacedDigit())
+                    .foregroundStyle(.primary)
             }
 
             if !model.isStandaloneMetric && model.formattedResetTime != "—" && !model.formattedResetTime.isEmpty {
                 Text(model.formattedResetTime)
-                    .font(.system(size: 9, design: .rounded))
-                    .foregroundStyle(.tertiary)
+                    .font(.caption.monospacedDigit())
+                    .foregroundStyle(.secondary)
             }
 
             if !model.isStandaloneMetric && displayStyle == .ring {
@@ -1827,8 +1745,8 @@ private struct MenuModelDetailView: View {
                     // A 14pt ring has no room for a label, so replace it with the
                     // same placeholder the other display styles render.
                     Text("—")
-                        .font(.system(size: 10, weight: .semibold, design: .rounded))
-                        .foregroundStyle(statusColor)
+                        .font(.caption.weight(.semibold))
+                        .foregroundStyle(.secondary)
                         .accessibilityLabel("usage.ring".localized())
                         .accessibilityValue("quota.noDataYet".localized())
                 } else {
@@ -1836,8 +1754,8 @@ private struct MenuModelDetailView: View {
                 }
             }
         }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
+        .padding(.horizontal, MenuItemMetrics.contentInset)
+        .padding(.vertical, 4)
     }
 }
 
@@ -1845,147 +1763,11 @@ private struct MenuModelDetailView: View {
 
 private struct MenuEmptyStateView: View {
     var body: some View {
-        VStack(spacing: 6) {
-            Text("menubar.noData".localized())
-                .font(.subheadline)
-                .foregroundStyle(.secondary)
-        }
-        .frame(maxWidth: .infinity)
-        .padding(.vertical, 16)
-        .padding(.horizontal, 12)
-    }
-}
-
-// MARK: View More Accounts
-
-private struct MenuViewMoreAccountsView: View {
-    let remainingCount: Int
-    let isExpanded: Bool
-    let onToggle: () -> Void
-
-    @State private var isHovered = false
-
-    var body: some View {
-        Button(action: onToggle) {
-            HStack(spacing: 6) {
-                Image(systemName: isExpanded ? "chevron.up" : "chevron.down")
-                    .font(.system(size: 10, weight: .semibold))
-                    .foregroundStyle(.secondary)
-                    .rotationEffect(.degrees(isExpanded ? 180 : 0))
-                    .animation(.spring(response: 0.3, dampingFraction: 0.7), value: isExpanded)
-
-                Text(isExpanded ? "menubar.hideAccounts".localized() : "menubar.viewMoreAccounts".localized())
-                    .font(.system(size: 12, weight: .medium))
-
-                if remainingCount > 0 {
-                    Text("+\(remainingCount)")
-                        .font(.system(size: 10, weight: .semibold, design: .monospaced))
-                        .foregroundStyle(.secondary)
-                        .padding(.horizontal, 6)
-                        .padding(.vertical, 2)
-                        .background(Color.secondary.opacity(0.08))
-                        .clipShape(Capsule())
-                        .opacity(isExpanded ? 0 : 1)
-                        .animation(.easeInOut(duration: 0.2), value: isExpanded)
-                }
-
-                Spacer()
-            }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
-            .background(isHovered ? Color.secondary.opacity(0.1) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-        .onHover { isHovered = $0 }
-    }
-}
-
-// MARK: - QuotaProvider Extension
-
-// MARK: - Menu Actions View
-
-private struct MenuActionsView: View {
-    let canRefresh: Bool
-    let isLoading: Bool
-    let onRefresh: () -> Void
-    let onPairIPhone: () -> Void
-    let onOpenApp: () -> Void
-    let onQuit: () -> Void
-
-    var body: some View {
-        VStack(spacing: 0) {
-            MenuBarActionButton(
-                icon: "arrow.clockwise",
-                title: "action.refresh".localized(),
-                isLoading: isLoading,
-                action: onRefresh
-            )
-            .disabled(isLoading || !canRefresh)
-            
-            MenuBarActionButton(
-                icon: "iphone",
-                title: "companion.pair".localized(),
-                action: onPairIPhone
-            )
-
-            MenuBarActionButton(
-                icon: "macwindow",
-                title: "action.openApp".localized(),
-                action: onOpenApp
-            )
-            
-            Divider()
-                .padding(.vertical, 4)
-            
-            MenuBarActionButton(
-                icon: "xmark.circle",
-                title: "action.quit".localized(),
-                action: onQuit
-            )
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 4)
-    }
-}
-
-// MARK: - Menu Bar Action Button
-
-private struct MenuBarActionButton: View {
-    let icon: String
-    let title: String
-    var isLoading: Bool = false
-    let action: () -> Void
-    
-    @State private var isHovered = false
-    
-    var body: some View {
-        Button(action: action) {
-            HStack {
-                Image(systemName: icon)
-                    .font(.system(size: 12))
-                    .frame(width: 14)
-                
-                Text(title)
-                    .font(.system(size: 13))
-                
-                Spacer()
-                
-                if isLoading {
-                    SmallProgressView(size: 12)
-                }
-            }
-            .padding(.vertical, 6)
-            .padding(.horizontal, 8)
-            .background(isHovered ? Color.secondary.opacity(0.1) : Color.clear)
-            .clipShape(RoundedRectangle(cornerRadius: 8, style: .continuous))
-            .contentShape(Rectangle())
-        }
-        .buttonStyle(.plain)
-        .disabled(isLoading)
-        .onHover { isHovered = $0 }
+        Text("menubar.noData".localized())
+            .font(.callout)
+            .foregroundStyle(.secondary)
+            .frame(maxWidth: .infinity)
+            .padding(.vertical, 12)
+            .padding(.horizontal, MenuItemMetrics.contentInset)
     }
 }

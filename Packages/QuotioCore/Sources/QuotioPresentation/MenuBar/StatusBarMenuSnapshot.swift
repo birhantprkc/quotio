@@ -34,7 +34,6 @@ public struct StatusBarMenuSnapshot: Equatable, Sendable {
     let isLoadingQuotas: Bool
     let canRefresh: Bool
     let displaySettings: StatusBarMenuDisplaySettings
-    let appearanceMode: AppearanceMode
     let language: AppLanguage
 }
 
@@ -43,7 +42,6 @@ public enum StatusBarMenuSnapshotMapper {
         monitorAccounts: [Account],
         quota: QuotaSnapshot,
         menuBarPreferences: MenuBarPreferences,
-        appearanceMode: AppearanceMode,
         language: AppLanguage,
         trackingPreferences: ProviderTrackingPreferences = ProviderTrackingPreferences()
     ) -> StatusBarMenuSnapshot {
@@ -95,7 +93,6 @@ public enum StatusBarMenuSnapshotMapper {
                 hideSensitiveInfo: menuBarPreferences.hideSensitiveInfo,
                 modelAggregationMode: menuBarPreferences.modelAggregationMode
             ),
-            appearanceMode: appearanceMode,
             language: language
         )
     }

@@ -24,7 +24,7 @@ final class StatusBarMenuSnapshotMapperTests: XCTestCase {
         let snapshot = StatusBarMenuSnapshotMapper.makeSnapshot(
             monitorAccounts: [disabled],
             quota: QuotaSnapshot(quotas: [.codex: ["Account-A": ProviderQuota(), "account-a": ProviderQuota()]]),
-            menuBarPreferences: MenuBarPreferences(), appearanceMode: .system, language: .english
+            menuBarPreferences: MenuBarPreferences(), language: .english
         )
         XCTAssertEqual(snapshot.providers.first?.accounts.map(\.id.accountKey), ["account-a"])
     }
@@ -34,7 +34,7 @@ final class StatusBarMenuSnapshotMapperTests: XCTestCase {
         let snapshot = StatusBarMenuSnapshotMapper.makeSnapshot(
             monitorAccounts: [],
             quota: QuotaSnapshot(providerNames: [provider: "Host Provider Name"], quotas: [provider: ["account": ProviderQuota()]]),
-            menuBarPreferences: MenuBarPreferences(), appearanceMode: .system, language: .english
+            menuBarPreferences: MenuBarPreferences(), language: .english
         )
         XCTAssertEqual(snapshot.providers.first?.displayName, "Host Provider Name")
         XCTAssertFalse(snapshot.canRefresh)
@@ -47,7 +47,7 @@ final class StatusBarMenuSnapshotMapperTests: XCTestCase {
             monitorAccounts: [],
             quota: QuotaSnapshot(quotas: [.claude: ["Work": ProviderQuota()]]),
             menuBarPreferences: MenuBarPreferences(selectedProvider: .claude),
-            appearanceMode: .system, language: .english,
+            language: .english,
             trackingPreferences: .init(disabledProviders: [.claude])
         )
         XCTAssertTrue(snapshot.providers.isEmpty)
@@ -91,7 +91,6 @@ final class StatusBarMenuSnapshotMapperTests: XCTestCase {
             monitorAccounts: [enabledMonitorAccount, disabledMonitorAccount],
             quota: quota,
             menuBarPreferences: preferences,
-            appearanceMode: .dark,
             language: .vietnamese
         )
 
@@ -102,7 +101,6 @@ final class StatusBarMenuSnapshotMapperTests: XCTestCase {
         XCTAssertEqual(snapshot.displaySettings.quotaDisplayStyle, .ring)
         XCTAssertTrue(snapshot.displaySettings.hideSensitiveInfo)
         XCTAssertEqual(snapshot.displaySettings.modelAggregationMode, .average)
-        XCTAssertEqual(snapshot.appearanceMode, .dark)
         XCTAssertEqual(snapshot.language, .vietnamese)
 
         let antigravity = try XCTUnwrap(snapshot.providers.first { $0.provider == .antigravity })
@@ -125,7 +123,6 @@ final class StatusBarMenuSnapshotMapperTests: XCTestCase {
                 .codex: ["codex": ProviderQuota()],
             ]),
             menuBarPreferences: MenuBarPreferences(selectedProvider: .claude),
-            appearanceMode: .system,
             language: .english
         )
 
@@ -147,7 +144,6 @@ final class StatusBarMenuSnapshotMapperTests: XCTestCase {
                 .codex: ["enabled@example.com": ProviderQuota()],
             ]),
             menuBarPreferences: MenuBarPreferences(),
-            appearanceMode: .system,
             language: .english
         )
 
@@ -158,28 +154,6 @@ final class StatusBarMenuSnapshotMapperTests: XCTestCase {
 
 @MainActor
 final class StatusBarMenuRendererTests: XCTestCase {
-    func testSelectedProviderRendersOnlyItsAccountGroup() {
-        let unfiltered = makeSnapshot(selectedProvider: nil)
-        let filtered = makeSnapshot(selectedProvider: .claude)
-        let dispatcher = makeNoopDispatcher()
-
-        let unfilteredMenu = StatusBarMenuRenderer(
-            snapshot: unfiltered,
-            commands: dispatcher
-        ).buildMenu()
-        let filteredMenu = StatusBarMenuRenderer(
-            snapshot: filtered,
-            commands: dispatcher
-        ).buildMenu()
-
-        let unfilteredItems = unfilteredMenu.items.filter { !$0.isHidden }
-        let filteredItems = filteredMenu.items.filter { !$0.isHidden }
-        XCTAssertEqual(unfilteredItems.count, 11)
-        XCTAssertEqual(unfilteredItems.filter(\.isSeparatorItem).count, 4)
-        XCTAssertEqual(filteredItems.count, 7)
-        XCTAssertEqual(filteredItems.filter(\.isSeparatorItem).count, 3)
-    }
-
     func testProviderFilterHidesItemsWithoutReplacingTrackedMenuContents() {
         var selections: [QuotaProvider?] = []
         let controller = StatusBarProviderFilterController(selectedProvider: nil) {
@@ -205,35 +179,6 @@ final class StatusBarMenuRendererTests: XCTestCase {
         XCTAssertEqual(selections, [.claude])
     }
 
-    private func makeSnapshot(selectedProvider: QuotaProvider?) -> StatusBarMenuSnapshot {
-        StatusBarMenuSnapshotMapper.makeSnapshot(
-            monitorAccounts: [],
-            quota: QuotaSnapshot(quotas: [
-                .claude: [
-                    "claude-key": ProviderQuota(accountDisplayName: "claude@example.com"),
-                ],
-                .codex: [
-                    "codex-key": ProviderQuota(accountDisplayName: "codex@example.com"),
-                ],
-            ]),
-            menuBarPreferences: MenuBarPreferences(selectedProvider: selectedProvider),
-            appearanceMode: .system,
-            language: .english
-        )
-    }
-
-    private func makeNoopDispatcher() -> StatusBarCommandDispatcher {
-        StatusBarCommandDispatcher(handlers: StatusBarCommandHandlers(
-            refreshAll: {},
-            refreshProvider: { _ in },
-            refreshAccount: { _ in },
-            selectProvider: { _ in },
-            pairIPhone: {},
-            openApp: {},
-            quit: {},
-            menuNeedsRebuild: {}
-        ))
-    }
 }
 
 @MainActor

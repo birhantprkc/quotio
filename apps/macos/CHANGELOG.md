@@ -7,6 +7,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Changed
+
+- Keep the status menu and Pair iPhone popover aligned with the menu bar appearance. The app appearance setting continues to control app windows.
+- Use native menu items for Refresh, Pair iPhone, Settings, and Quit, with keyboard shortcuts for Refresh, Settings, and Quit.
+- Simplify quota grouping and use system typography, neutral percentage labels, and visible selection feedback in the status menu.
+
+### Fixed
+
+- Avoid forcing a Light status menu over a Dark menu bar, which made labels difficult to read in the reported configuration.
+
 ## [1.0.0-beta.1] - 2026-10-03
 
 ### Added
