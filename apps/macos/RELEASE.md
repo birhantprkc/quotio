@@ -14,9 +14,11 @@ The workflow:
 4. When signing is enabled, signs nested code and the app with Hardened Runtime, notarizes the app, and staples the ticket.
 5. Creates the universal app, ZIP, and DMG; signed builds also sign, notarize, and staple the DMG.
 6. For stable releases only, signs the final ZIP with Sparkle and creates the appcast.
-7. Creates the tag and GitHub Release.
+7. Creates the tag and GitHub Release, including the matching version section from `CHANGELOG.md` and GitHub's generated pull request summary.
 8. Commits the version and changelog changes back to the source branch.
 9. Updates the Homebrew tap for stable releases.
+
+Populate the version's `CHANGELOG.md` section before publishing. The workflow rejects missing or empty release notes.
 
 GitHub Actions reads release credentials only from repository secrets:
 
