@@ -387,7 +387,7 @@ async fn snapshot_includes_unregistered_observations_without_reading_credentials
 }
 
 #[tokio::test]
-async fn snapshot_groups_local_and_registered_sources_for_the_same_provider_account() {
+async fn snapshot_groups_external_sources_only_with_matching_verified_identity() {
     use quotio::{
         contract::{AccountList, snapshot::project},
         domain::{AccountOrigin, AccountRef, VerifiedIdentity},
@@ -409,17 +409,39 @@ async fn snapshot_groups_local_and_registered_sources_for_the_same_provider_acco
         label: "Amp CLI login".into(),
         origin: Some(AccountOrigin::BorrowedNative),
     });
-    for verified in [
-        None,
-        Some(VerifiedIdentity {
-            subject: "same@example.com".into(),
-            tenant: None,
-        }),
+    let verified = Some(VerifiedIdentity {
+        subject: "provider-user-id".into(),
+        tenant: Some("work".into()),
+    });
+    for (native_identity, local_identity, should_merge) in [
+        (None, None, false),
+        (verified.clone(), None, false),
+        (None, verified.clone(), false),
+        (verified.clone(), verified.clone(), true),
+        (
+            verified.clone(),
+            Some(VerifiedIdentity {
+                subject: "different-user-id".into(),
+                tenant: Some("work".into()),
+            }),
+            false,
+        ),
+        (
+            verified.clone(),
+            Some(VerifiedIdentity {
+                subject: "provider-user-id".into(),
+                tenant: Some("personal".into()),
+            }),
+            false,
+        ),
     ] {
         let mut native = native.clone();
-        native.account.verified = verified;
+        native.account.verified = native_identity;
+        native.account.plan = Some("Native plan".into());
         let mut local = native.clone();
-        if local.account.verified.is_some() {
+        local.account.verified = local_identity;
+        local.account.plan = Some("Local plan".into());
+        if should_merge {
             local.account.id = "provider-specific-id".into();
         }
         local.account_ref = Some(AccountRef {
@@ -442,8 +464,36 @@ async fn snapshot_groups_local_and_registered_sources_for_the_same_provider_acco
         )
         .unwrap();
 
-        assert_eq!(snapshot.accounts.len(), 1);
-        assert_eq!(snapshot.accounts[0].sources.len(), 2);
+        let registered = snapshot
+            .accounts
+            .iter()
+            .find(|account| account.id == "source-a")
+            .unwrap();
+        if should_merge {
+            assert_eq!(snapshot.accounts.len(), 1);
+            assert_eq!(registered.sources.len(), 2);
+        } else {
+            assert_eq!(snapshot.accounts.len(), 2);
+            assert_eq!(registered.sources.len(), 1);
+            let external = snapshot
+                .accounts
+                .iter()
+                .find(|account| account.id != "source-a")
+                .unwrap();
+            assert_eq!(external.sources.len(), 1);
+            let native_usage = snapshot
+                .usage
+                .iter()
+                .find(|usage| usage.account_id == registered.id)
+                .unwrap();
+            let local_usage = snapshot
+                .usage
+                .iter()
+                .find(|usage| usage.account_id == external.id)
+                .unwrap();
+            assert_eq!(native_usage.plan.as_deref(), Some("Native plan"));
+            assert_eq!(local_usage.plan.as_deref(), Some("Local plan"));
+        }
     }
 
     let mut different = native.clone();

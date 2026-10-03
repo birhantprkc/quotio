@@ -46,7 +46,7 @@ fn same_provider_account(left: &ProviderUsage, right: &ProviderUsage) -> bool {
     }
     match (&left.account.verified, &right.account.verified) {
         (Some(left), Some(right)) => left == right,
-        _ => !left.account.id.trim().is_empty() && left.account.id == right.account.id,
+        _ => false,
     }
 }
 

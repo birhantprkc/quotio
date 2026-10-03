@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Restore cached quota after restart, keep healthy accounts visible when another source fails, and preserve disabled native sources across scans.
 - Improve account names and quota details for Codex, Copilot, Devin, Factory, Antigravity, Amp, and Grok.
+- Only merge native and registered account sources when both carry the same verified provider subject and tenant; matching local IDs alone no longer attach another source's quota.
 
 ## [0.33.0] - 2026-09-17
 
