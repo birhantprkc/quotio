@@ -3,11 +3,11 @@
 Quotio has two self-contained script entrypoints:
 
 - `build_and_run.sh`: build Debug, stop any running Quotio process, and launch the fresh app. Optional flags: `--debug`, `--logs`, `--telemetry`, `--verify`.
-- `build_dmg.sh`: build a Release archive, verify the bundled proxy, and create ZIP and DMG artifacts. Pass `--distribution` to require Developer ID signing, notarization, stapling, and Gatekeeper validation.
+- `build_dmg.sh`: build a universal CLI helper before the Release archive, verify both architectures, and create ZIP and DMG artifacts without Finder automation. Pass `--distribution` to require Developer ID signing, notarization, stapling, and Gatekeeper validation.
 
 `build_and_run.sh` respects the Xcode signing configuration. To sign local Debug builds with an Apple Development certificate, copy `Config/Local.xcconfig.example` to `Config/Local.xcconfig` and set `DEVELOPMENT_TEAM` to your Apple team ID.
 
-For a local release build:
+For a local release build, run from `apps/macos/`:
 
 ```bash
 ./scripts/build_dmg.sh
@@ -24,3 +24,5 @@ SPARKLE_PRIVATE_KEY=... \
 ```
 
 `SIGNING_IDENTITY` defaults to `Developer ID Application`. Set it to the certificate's SHA-1 hash when more than one matching identity is installed. See `RELEASE.md` for credential setup.
+
+Prerelease versions build `Quotio Beta.app` with bundle identifier `app.bytrong.quotio.beta`. Install it beside `Quotio.app`; it uses separate Quotio-owned state and manual updates. `--generate-appcast` is skipped for prereleases. See [the release guide](../RELEASE.md#independent-beta-releases) for isolation boundaries.

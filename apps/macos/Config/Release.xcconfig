@@ -7,5 +7,8 @@
 
 // Production settings (DO NOT override these locally)
 PRODUCT_BUNDLE_IDENTIFIER = app.bytrong.quotio
-PRODUCT_NAME = Quotio
+QUOTIO_APP_NAME = Quotio
+PRODUCT_NAME = $(QUOTIO_APP_NAME)
+INFOPLIST_KEY_CFBundleDisplayName = $(PRODUCT_NAME)
+QUOTIO_URL_SCHEME = quotio
 ENABLE_HARDENED_RUNTIME = YES

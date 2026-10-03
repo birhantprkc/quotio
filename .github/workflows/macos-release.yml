@@ -69,7 +69,7 @@ jobs:
           fi
           echo "VERSION=${VERSION}" >> "$GITHUB_OUTPUT"
           
-          # Check if beta
+          # Alpha, beta, and release candidates use the independent beta app.
           if [[ "$VERSION" == *"-beta"* ]] || [[ "$VERSION" == *"-alpha"* ]] || [[ "$VERSION" == *"-rc"* ]]; then
             echo "IS_PRERELEASE=true" >> "$GITHUB_OUTPUT"
           else
@@ -77,6 +77,24 @@ jobs:
           fi
           
           echo "Releasing version: ${VERSION}"
+
+      - name: Test core package
+        run: swift test --package-path ../../Packages/QuotioCore
+
+      - name: Test portable host client
+        run: swift test --package-path ../../Packages/QuotioHostClient
+
+      - name: Install ripgrep
+        run: HOMEBREW_NO_AUTO_UPDATE=1 brew install ripgrep
+
+      - name: Check architecture boundaries
+        run: ./scripts/check_architecture.sh
+
+      - name: Test app
+        run: >-
+          xcodebuild -project Quotio.xcodeproj -scheme Quotio
+          -configuration Debug -destination 'platform=macOS'
+          CODE_SIGNING_ALLOWED=NO test
 
       # ===========================================
       # 4. Build release artifacts
@@ -187,13 +205,17 @@ jobs:
           } >> "${GITHUB_ENV}"
           echo "enabled=true" >> "${GITHUB_OUTPUT}"
 
-      - name: Build DMG, ZIP, and appcast
+      - name: Build release artifacts
         env:
           SIGNING_ENABLED: ${{ steps.signing.outputs.enabled }}
           SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
           VERSION: ${{ steps.version.outputs.VERSION }}
+          IS_PRERELEASE: ${{ steps.version.outputs.IS_PRERELEASE }}
         run: |
-          args=(--version "$VERSION" --generate-appcast)
+          args=(--version "$VERSION")
+          if [[ "${IS_PRERELEASE}" == "false" ]]; then
+            args+=(--generate-appcast)
+          fi
           if [[ "${SIGNING_ENABLED}" == "true" ]]; then
             args+=(--distribution)
           fi
@@ -248,7 +270,8 @@ jobs:
           files: |
             apps/macos/build/release/*.dmg
             apps/macos/build/release/*.zip
-            apps/macos/build/release/appcast.xml
+            ${{ steps.version.outputs.IS_PRERELEASE == 'false' && 'apps/macos/build/release/appcast.xml' || '' }}
+          fail_on_unmatched_files: true
           generate_release_notes: true
           append_body: true
           body: |
@@ -257,33 +280,10 @@ jobs:
 
             Download `Quotio-${{ steps.version.outputs.VERSION }}.dmg` or `Quotio-${{ steps.version.outputs.VERSION }}.zip` below.
 
+            ${{ steps.version.outputs.IS_PRERELEASE == 'true' && 'This prerelease installs as Quotio Beta.app alongside Quotio. App updates are manual-only.' || '' }}
+
             ${{ steps.signing.outputs.enabled == 'true' && 'The app is signed with Developer ID and notarized by Apple.' || 'This artifact was built without Developer ID signing because Apple signing secrets were not configured.' }}
           prerelease: ${{ steps.version.outputs.IS_PRERELEASE == 'true' }}
-
-      # ===========================================
-      # 7. Update latest stable release with merged appcast
-      # ===========================================
-      - name: Update latest stable appcast
-        if: steps.version.outputs.IS_PRERELEASE == 'true'
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # Get the latest stable release tag
-          LATEST_STABLE=$(gh release list --exclude-pre-releases --limit 100 --json tagName -q '[.[] | select(.tagName | startswith("v"))][0].tagName // ""')
-          
-          if [ -n "$LATEST_STABLE" ]; then
-            echo "Updating appcast on latest stable release: $LATEST_STABLE"
-            
-            # Delete old appcast from stable release
-            gh release delete-asset "$LATEST_STABLE" appcast.xml --yes 2>/dev/null || true
-            
-            # Upload merged appcast to stable release
-            gh release upload "$LATEST_STABLE" build/release/appcast.xml --clobber
-            
-            echo "Updated appcast.xml on $LATEST_STABLE with merged entries"
-          else
-            echo "No stable release found to update"
-          fi
 
       # ===========================================
       # 8. Commit version changes

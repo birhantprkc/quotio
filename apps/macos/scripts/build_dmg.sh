@@ -8,7 +8,10 @@ PROJECT_FILE="${PROJECT_DIR}/${PROJECT_NAME}.xcodeproj"
 PBXPROJ="${PROJECT_FILE}/project.pbxproj"
 CHANGELOG="${PROJECT_DIR}/CHANGELOG.md"
 BUILD_DIR="${PROJECT_DIR}/build"
-APP_PATH="${BUILD_DIR}/${PROJECT_NAME}.app"
+APP_NAME="${PROJECT_NAME}"
+BUNDLE_IDENTIFIER="app.bytrong.quotio"
+URL_SCHEME="quotio"
+IS_PRERELEASE=false
 RELEASE_DIR="${BUILD_DIR}/release"
 APPCAST_PATH="${RELEASE_DIR}/appcast.xml"
 RELEASE_VERSION=""
@@ -27,7 +30,7 @@ usage() {
     echo "Build the Release app and create DMG and ZIP artifacts."
     echo "  --version VERSION      update the Xcode version and CHANGELOG before building"
     echo "  --distribution         require Developer ID signing and Apple notarization"
-    echo "  --generate-appcast     sign the ZIP and create appcast.xml using SPARKLE_PRIVATE_KEY"
+    echo "  --generate-appcast     sign stable ZIPs and create appcast.xml using SPARKLE_PRIVATE_KEY"
 }
 
 log() {
@@ -52,9 +55,6 @@ prepare_release_version() {
     local current_version
     local current_build
     local next_build
-
-    [[ "${version}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z]+([.-][0-9A-Za-z]+)*)?$ ]] \
-        || fail "invalid version: ${version}"
 
     if ! grep -Fq "## [${version}]" "${CHANGELOG}"; then
         sed -i '' "s/## \[Unreleased\]/## [Unreleased]\n\n## [${version}] - $(date +%Y-%m-%d)/" "${CHANGELOG}"
@@ -216,7 +216,6 @@ generate_appcast() {
     local zip_size
     local sign_output
     local signature
-    local channel=""
     local existing_appcast
     local existing_items=""
     local new_item
@@ -224,6 +223,7 @@ generate_appcast() {
     [ -n "${SPARKLE_PRIVATE_KEY:-}" ] || fail "SPARKLE_PRIVATE_KEY is required for appcast generation"
     require_command curl
     require_command tar
+    require_command python3
     install_sparkle_tools
 
     log "Signing ${zip_file} for Sparkle"
@@ -233,18 +233,11 @@ generate_appcast() {
 
     zip_name="$(basename "${zip_file}")"
     zip_size="$(stat -f%z "${zip_file}")"
-    case "${version}" in
-        *-alpha*|*-beta*|*-rc*) channel="            <sparkle:channel>beta</sparkle:channel>" ;;
-    esac
 
     new_item="        <item>
             <title>Version ${version}</title>
             <sparkle:version>${build_number}</sparkle:version>
             <sparkle:shortVersionString>${version}</sparkle:shortVersionString>"
-    if [ -n "${channel}" ]; then
-        new_item="${new_item}
-${channel}"
-    fi
     new_item="${new_item}
             <pubDate>$(date -R)</pubDate>
             <enclosure url=\"https://github.com/${GITHUB_REPO}/releases/download/v${version}/${zip_name}\"
@@ -254,19 +247,23 @@ ${channel}"
         </item>"
 
     existing_appcast="$(curl -fsSL "https://github.com/${GITHUB_REPO}/releases/latest/download/appcast.xml" 2>/dev/null || true)"
-    if [[ "${existing_appcast}" == *"<item>"* ]]; then
-        existing_items="$(
-            printf '%s\n' "${existing_appcast}" \
-                | sed -n '/<item>/,/<\/item>/p' \
-                | awk -v version="${version}" '
-                    /<item>/ { item = ""; in_item = 1 }
-                    in_item { item = item $0 "\n" }
-                    /<\/item>/ {
-                        in_item = 0
-                        if (index(item, ">" version "<") == 0) printf "%s", item
-                    }
-                '
-        )"
+    if [ -n "${existing_appcast}" ]; then
+        existing_items="$(printf '%s\n' "${existing_appcast}" | python3 -c '
+import re
+import sys
+import xml.etree.ElementTree as ET
+
+sparkle = "http://www.andymatuschak.org/xml-namespaces/sparkle"
+ET.register_namespace("sparkle", sparkle)
+ET.register_namespace("dc", "http://purl.org/dc/elements/1.1/")
+root = ET.parse(sys.stdin).getroot()
+for item in root.findall("./channel/item"):
+    version = item.findtext(f"{{{sparkle}}}shortVersionString", "").strip()
+    channel = item.findtext(f"{{{sparkle}}}channel", "").strip()
+    if version == sys.argv[1] or channel == "beta" or re.search(r"-(alpha|beta|rc)([.-]|$)", version):
+        continue
+    print(ET.tostring(item, encoding="unicode"))
+' "${version}")"
     fi
 
     cat > "${APPCAST_PATH}" <<EOF
@@ -323,6 +320,24 @@ require_command ditto
 require_command codesign
 require_command shasum
 require_command hdiutil
+require_command lipo
+
+VERSION="${RELEASE_VERSION:-$(read_build_setting MARKETING_VERSION)}"
+[[ "${VERSION}" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)[.-][0-9]+)?$ ]] \
+    || fail "invalid version: ${VERSION}"
+case "${VERSION}" in
+    *-alpha*|*-beta*|*-rc*)
+        IS_PRERELEASE=true
+        APP_NAME="Quotio Beta"
+        BUNDLE_IDENTIFIER="app.bytrong.quotio.beta"
+        URL_SCHEME="quotio-beta"
+        if [ "${GENERATE_APPCAST}" = true ]; then
+            log "Prerelease app updates are manual-only; skipping Sparkle appcast generation"
+            GENERATE_APPCAST=false
+        fi
+        ;;
+esac
+APP_PATH="${BUILD_DIR}/${APP_NAME}.app"
 
 if [ "${DISTRIBUTION}" = true ]; then
     require_command security
@@ -336,12 +351,11 @@ if [ -n "${RELEASE_VERSION}" ]; then
     prepare_release_version "${RELEASE_VERSION}"
 fi
 
-VERSION="$(read_build_setting MARKETING_VERSION)"
 BUILD_NUMBER="$(read_build_setting CURRENT_PROJECT_VERSION)"
 [ -n "${VERSION}" ] || fail "MARKETING_VERSION not found"
 [ -n "${BUILD_NUMBER}" ] || fail "CURRENT_PROJECT_VERSION not found"
 
-log "Building ${PROJECT_NAME} ${VERSION} (build ${BUILD_NUMBER})"
+log "Building ${APP_NAME} ${VERSION} (build ${BUILD_NUMBER})"
 TEMP_ROOT="$(mktemp -d "${TMPDIR:-/tmp}/quotio-release.XXXXXX")"
 ARCHIVE_PATH="${TEMP_ROOT}/${PROJECT_NAME}.xcarchive"
 DERIVED_DATA="${TEMP_ROOT}/DerivedData"
@@ -358,6 +372,12 @@ ARCHIVE_ARGS=(
     -archivePath "${ARCHIVE_PATH}"
     -derivedDataPath "${DERIVED_DATA}"
     -destination "generic/platform=macOS"
+    "ARCHS=arm64 x86_64"
+    ONLY_ACTIVE_ARCH=NO
+    "PRODUCT_BUNDLE_IDENTIFIER=${BUNDLE_IDENTIFIER}"
+    "QUOTIO_APP_NAME=${APP_NAME}"
+    "INFOPLIST_KEY_CFBundleDisplayName=${APP_NAME}"
+    "QUOTIO_URL_SCHEME=${URL_SCHEME}"
     SKIP_INSTALL=NO
     BUILD_LIBRARY_FOR_DISTRIBUTION=YES
     CODE_SIGN_IDENTITY="-"
@@ -365,13 +385,29 @@ ARCHIVE_ARGS=(
     CODE_SIGNING_ALLOWED=NO
 )
 
-xcodebuild "${ARCHIVE_ARGS[@]}" 2>&1 | tee "${BUILD_DIR}/release-build.log"
+log "Building universal Quotio CLI helper before the Xcode archive"
+CONFIGURATION=Release ARCHS="arm64 x86_64" CODE_SIGNING_ALLOWED=NO \
+    TEMP_DIR="${TEMP_ROOT}" TARGET_BUILD_DIR="${TEMP_ROOT}" \
+    CONTENTS_FOLDER_PATH=helper-stage \
+    "${PROJECT_DIR}/scripts/build_cli_helper.sh"
 
-ARCHIVED_APP="${ARCHIVE_PATH}/Products/Applications/${PROJECT_NAME}.app"
-[ -d "${ARCHIVED_APP}" ] || fail "archive did not contain ${PROJECT_NAME}.app"
+QUOTIO_CLI_BINARY="${TEMP_ROOT}/helper-stage/Helpers/quotio-cli" \
+    xcodebuild "${ARCHIVE_ARGS[@]}" 2>&1 | tee "${BUILD_DIR}/release-build.log"
+
+ARCHIVED_APP="${ARCHIVE_PATH}/Products/Applications/${APP_NAME}.app"
+[ -d "${ARCHIVED_APP}" ] || fail "archive did not contain ${APP_NAME}.app"
 cp -R "${ARCHIVED_APP}" "${APP_PATH}"
 CLI_HELPER="${APP_PATH}/Contents/Helpers/quotio-cli"
 [ -x "${CLI_HELPER}" ] || fail "archive did not contain an executable Quotio CLI helper"
+for arch in arm64 x86_64; do
+    lipo "${CLI_HELPER}" -verify_arch "${arch}"
+    lipo "${APP_PATH}/Contents/MacOS/${APP_NAME}" -verify_arch "${arch}"
+done
+if [ "${IS_PRERELEASE}" = true ]; then
+    for key in SUFeedURL SUPublicEDKey SUEnableAutomaticChecks SUScheduledCheckInterval; do
+        /usr/libexec/PlistBuddy -c "Delete :${key}" "${APP_PATH}/Contents/Info.plist"
+    done
+fi
 if [ "${DISTRIBUTION}" = true ]; then
     sign_app_for_distribution
     notarize_app
@@ -390,22 +426,16 @@ cp -R "${APP_PATH}" "${DMG_STAGING}/"
 
 log "Creating ${DMG_FILE}"
 if command -v create-dmg >/dev/null 2>&1; then
-    if ! create-dmg \
-        --volname "${PROJECT_NAME}" \
-        --window-pos 200 120 \
-        --window-size 600 400 \
-        --icon-size 100 \
-        --icon "${PROJECT_NAME}.app" 150 190 \
-        --hide-extension "${PROJECT_NAME}.app" \
+    create-dmg \
+        --volname "${APP_NAME}" \
         --app-drop-link 450 185 \
+        --skip-jenkins \
         --no-internet-enable \
         "${DMG_FILE}" \
-        "${DMG_STAGING}"; then
-        [ -f "${DMG_FILE}" ] || fail "create-dmg failed"
-    fi
+        "${DMG_STAGING}" || fail "create-dmg failed"
 else
     hdiutil create \
-        -volname "${PROJECT_NAME}" \
+        -volname "${APP_NAME}" \
         -srcfolder "${DMG_STAGING}" \
         -ov \
         -format UDZO \

@@ -475,7 +475,7 @@
 				EXCLUDED_SOURCE_FILE_NAMES = AGENTS.md;
 				GENERATE_INFOPLIST_FILE = YES;
 				INFOPLIST_FILE = Quotio/Info.plist;
-				INFOPLIST_KEY_CFBundleDisplayName = Quotio;
+				INFOPLIST_KEY_CFBundleDisplayName = "$(PRODUCT_NAME)";
 				INFOPLIST_KEY_LSApplicationCategoryType = "public.app-category.developer-tools";
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphoneos*]" = YES;
 				"INFOPLIST_KEY_UIApplicationSceneManifest_Generation[sdk=iphonesimulator*]" = YES;
@@ -493,7 +493,7 @@
 				MACOSX_DEPLOYMENT_TARGET = 14.0;
 				MARKETING_VERSION = 0.33.0;
 				PRODUCT_BUNDLE_IDENTIFIER = app.bytrong.quotio;
-				PRODUCT_NAME = "$(TARGET_NAME)";
+				PRODUCT_NAME = "$(QUOTIO_APP_NAME)";
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = auto;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;

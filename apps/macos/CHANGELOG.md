@@ -18,12 +18,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Account and usage clients now use the version 2 host API. Older API routes and response formats are no longer supported.
 - Production app accounts and monitoring preferences are imported into the helper; the independent beta starts without importing production state. The previous operating mode selector and YubiKey credential writes have been removed.
 - The protected account store uses a newer format and cannot be opened by older Quotio CLI versions after migration.
+- Prereleases install as Quotio Beta alongside Quotio, with separate preferences, Keychain services, account vault, proxy files, and default port. Beta updates use manual downloads and never modify the stable Sparkle feed.
 
 ### Fixed
 
 - Restore cached quota after restart, keep healthy accounts visible when another source fails, and preserve disabled native sources across scans.
 - Improve account names and quota details for Codex, Copilot, Devin, Factory, Antigravity, Amp, and Grok.
 - Only merge native and registered account sources when both carry the same verified provider subject and tenant; matching local IDs alone no longer attach another source's quota.
+- Build the beta app and bundled helper for both Apple Silicon and Intel, and create DMGs without Finder automation.
 
 ## [0.33.0] - 2026-09-17
 
