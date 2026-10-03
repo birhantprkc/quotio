@@ -27,6 +27,8 @@ jobs:
     timeout-minutes: 5
     permissions:
       contents: write
+    outputs:
+      release_id: ${{ steps.assets.outputs.release_id }}
     env:
       GH_TOKEN: ${{ github.token }}
       RELEASE_TAG: ${{ github.event.release.tag_name || inputs.tag }}
@@ -37,6 +39,27 @@ jobs:
           app_tag=$(gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '[.[] | select(.draft == false and .prerelease == false and (.tag_name | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$")))] | first | .tag_name')
           [[ "$app_tag" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]
           gh release edit "$app_tag" --repo "$GITHUB_REPOSITORY" --latest
+      - name: Download prepared npm assets
+        id: assets
+        run: |
+          set -euo pipefail
+          version=${RELEASE_TAG#cli-v}
+          gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases?per_page=100" | \
+            jq -e '[.[][] | select(.tag_name == env.RELEASE_TAG)] | if length == 1 then .[0] else error("Expected one matching CLI release") end' > release.json
+          release_id=$(jq -er '.id' release.json)
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          mkdir npm-assets
+          for name in "quotio-$version.tgz" SHA256SUMS; do
+            asset_id=$(jq -er --arg name "$name" '[.assets[] | select(.name == $name)] | if length == 1 then .[0].id else error("Expected one matching release asset") end' release.json)
+            gh api "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+              --header 'Accept: application/octet-stream' > "npm-assets/$name"
+          done
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: cli-npm-publication-${{ github.run_id }}
+          path: npm-assets/*
+          if-no-files-found: error
+          retention-days: 1
   npm:
     name: Publish npm package
     if: github.event_name == 'workflow_dispatch' || startsWith(github.event.release.tag_name, 'cli-v')
@@ -56,11 +79,14 @@ jobs:
           node-version: '24'
           package-manager-cache: false
           registry-url: https://registry.npmjs.org
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093
+        with:
+          name: cli-npm-publication-${{ github.run_id }}
+          path: .
       - name: Download and verify npm artifact
         run: |
           [[ "$RELEASE_TAG" =~ ^cli-v[0-9]+\.[0-9]+\.[0-9]+(-(alpha|beta|rc)\.[0-9]+)?$ ]]
           version=${RELEASE_TAG#cli-v}
-          gh release download "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --pattern "quotio-$version.tgz" --pattern SHA256SUMS
           awk -v name="quotio-$version.tgz" '$2 == name' SHA256SUMS > npm.sha256
           test "$(wc -l < npm.sha256)" -eq 1
           sha256sum --check npm.sha256
@@ -79,17 +105,17 @@ jobs:
   publish-github:
     name: Publish verified CLI release
     if: github.event_name == 'workflow_dispatch'
-    needs: npm
+    needs: [github, npm]
     runs-on: ubuntu-24.04
     timeout-minutes: 5
     permissions:
       contents: write
     env:
       GH_TOKEN: ${{ github.token }}
-      RELEASE_TAG: ${{ inputs.tag }}
+      RELEASE_ID: ${{ needs.github.outputs.release_id }}
     steps:
       - name: Publish prepared draft after npm succeeds
-        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false --latest=false
+        run: gh api --method PATCH "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID" -F draft=false -f make_latest=false
   homebrew:
     name: Update Homebrew tap
     if: (github.event_name == 'workflow_dispatch' && inputs.publish_homebrew) || startsWith(github.event.release.tag_name, 'cli-v')

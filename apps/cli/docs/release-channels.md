@@ -93,6 +93,8 @@ integrity matches exactly.
 
 To publish npm without changing the Homebrew tap, run **Publish package channels** with the prepared `cli-v*` tag and `publish_homebrew=false`. Manual dispatch verifies and publishes the npm tarball first, then publishes the GitHub draft using the workflow token. This does not trigger a second release-event workflow. The npm prerelease channel remains `next`; `latest` is unchanged.
 
+The GitHub job downloads draft assets by release and asset ID using its existing repository write permission. It transfers the tarball and checksums to the npm job, which keeps repository read-only access. npm verifies the checksum before publishing.
+
 ```sh
 gh workflow run cli-publish-release.yml --ref master \
   -f tag=cli-v1.0.0-beta.1 -f publish_homebrew=false
