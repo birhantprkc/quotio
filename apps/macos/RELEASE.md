@@ -47,7 +47,7 @@ The production bundle identifier is `app.bytrong.quotio`. The first signed relea
 
 ## Independent Beta Releases
 
-Versions matching `X.Y.Z-alpha-N`, `X.Y.Z-beta-N`, or `X.Y.Z-rc-N` (also accepting `.N` suffixes) build a separate beta app. Choose an unused tag; `v1.0.0-beta-1` and `v1.0.0-beta-2` already exist.
+Versions matching `X.Y.Z-alpha-N`, `X.Y.Z-beta-N`, or `X.Y.Z-rc-N` (also accepting `.N` suffixes) build a separate beta app. Choose an unused tag.
 
 | Identity or resource | Stable | Prerelease |
 |----------------------|--------|------------|
